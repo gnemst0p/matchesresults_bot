@@ -39,4 +39,5 @@
 .bracket-match strong{font-size:10px}.data-credit{margin-top:16px;color:#66747e;font:9px "DM Mono",monospace}
 .liquipedia-results{margin-top:17px}.liquipedia-results h4{margin-top:0}.liquipedia-results>small{display:block;margin-top:9px;color:#71808a;font-size:9px}.liquipedia-results>small a{color:#9da9b1}
 .liquipedia-items{display:grid;gap:7px}.liquipedia-result{display:flex;flex-direction:column;gap:5px;padding:9px 10px;border:1px solid #202b33;border-radius:6px;background:#111820;color:#d3dade;text-decoration:none;font-size:10px}.liquipedia-result span{color:#87949e;line-height:1.5}.liquipedia-result:hover{border-color:#566d31}
+.score-note{margin-top:4px;color:#78838c;font:7px "DM Mono",monospace;line-height:1.35;text-align:center}
 @media(max-width:500px){.date-filter,.tournament-filter{gap:6px}.date-shortcut,.tournament-tab{padding:8px 9px;font-size:9px}.date-custom{width:100%;margin:4px 0 0}.tournament-meta{flex-direction:column;gap:5px}.standing-row{flex-wrap:wrap}.standing-row span{width:100%;padding-left:28px}}

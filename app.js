@@ -44,7 +44,14 @@ function shortDate(value) {
   if (!value) return state.status === 'live' ? 'СЕГОДНЯ' : 'МАТЧИ';
   return new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long' }).format(new Date(value)).toUpperCase();
 }
-function scoreOf(opponent) { return opponent?.score ?? opponent?.result?.score ?? null; }
+function scoreOf(match, opponent, index) {
+  const direct = opponent?.score ?? opponent?.result?.score;
+  if (direct !== undefined && direct !== null) return direct;
+  const teamId = opponent?.opponent?.id;
+  const results = Array.isArray(match.results) ? match.results : [];
+  const result = results.find(item => teamId != null && [item.team_id, item.opponent_id, item.team?.id, item.opponent?.id].some(id => id != null && String(id) === String(teamId))) || results[index];
+  return result?.score ?? result?.result?.score ?? result?.opponent?.score ?? null;
+}
 function statusLabel(status) {
   return ({ running: 'Матч идёт', not_started: 'Ещё не начался', finished: 'Завершён', canceled: 'Отменён', postponed: 'Перенесён', rescheduled: 'Перенесён' })[status] || status || 'Статус неизвестен';
 }
@@ -89,8 +96,12 @@ function teamMarkup(team, side) {
 function cardMarkup(match) {
   const opponents = match.opponents || [];
   const [first, second] = opponents;
-  const scoresReady = first && second && (scoreOf(first) !== null || scoreOf(second) !== null);
-  const scores = scoresReady ? `<span class="score">${escapeHtml(scoreOf(first) ?? 0)}<span class="separator">:</span>${escapeHtml(scoreOf(second) ?? 0)}</span>` : '<span class="score pending">VS</span>';
+  const firstScore = scoreOf(match, first, 0);
+  const secondScore = scoreOf(match, second, 1);
+  const scoresReady = first && second && firstScore !== null && secondScore !== null;
+  const scores = scoresReady
+    ? `<span class="score" aria-label="Счёт ${escapeHtml(firstScore)} на ${escapeHtml(secondScore)}">${escapeHtml(firstScore)}<span class="separator">:</span>${escapeHtml(secondScore)}</span>`
+    : `<span class="score pending" aria-label="Счёт пока не опубликован">—<span class="separator">:</span>—</span>`;
   const tournament = match.tournament?.name || match.league?.name || match.serie?.full_name || 'Матч';
   const round = match.number_of_games ? `BO${match.number_of_games}` : (match.tournament?.name || 'Матч');
   const date = dateOf(match);
@@ -98,7 +109,8 @@ function cardMarkup(match) {
   const klass = live ? 'live-card' : state.status === 'past' ? 'finished-card' : 'scheduled-card';
   const game = match.game === 'cs2' ? 'CS2' : 'DOTA 2';
   const status = live ? '● LIVE' : state.status === 'past' ? 'ЗАВЕРШЁН' : 'НАЧАЛО';
-  const center = live || state.status === 'past' ? scores : `<span class="score pending">${date ? escapeHtml(new Intl.DateTimeFormat('ru-RU', { timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit' }).format(new Date(date))) : 'TBA'}</span>`;
+  const scoreNote = !scoresReady && (live || state.status === 'past') ? `<div class="score-note">${live ? 'LIVE-СЧЁТ НЕ ПЕРЕДАН ИСТОЧНИКОМ' : 'ИТОГОВЫЙ СЧЁТ НЕ ОПУБЛИКОВАН'}</div>` : '';
+  const center = live || state.status === 'past' ? `${scores}${scoreNote}` : `<span class="score pending">${date ? escapeHtml(new Intl.DateTimeFormat('ru-RU', { timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit' }).format(new Date(date))) : 'TBA'}</span>`;
   const detailsId = `match-details-${escapeHtml(match.id || match.slug || `${match.game}-${date || 'match'}`)}`;
   return `<article class="match-card ${klass}"><span class="match-status">${status}</span>${teamMarkup(first,'left')}<div class="scoreline">${center}<div class="series">${escapeHtml(round.toUpperCase())}</div><div class="match-meta">${game} · ${escapeHtml(tournament)}</div></div>${teamMarkup(second,'right')}<button class="details-toggle" type="button" aria-expanded="false" aria-controls="${detailsId}">Подробнее <span aria-hidden="true">＋</span></button>${detailsMarkup(match, detailsId, tournament)}</article>`;
 }
@@ -180,7 +192,27 @@ function tournamentMarkup(t) {
   const dates = [t.begin_at || t.start_at, t.end_at].filter(Boolean).map(tournamentDate).join(' — ');
   const prize = t.prizepool || t.prize_pool;
   const id = String(t.id || t.slug || '');
-  return `<article class="tournament-card"><div class="tournament-topline"><span>${escapeHtml((t.game || '').toUpperCase())}</span>${t.tier ? `<span class="tournament-tier">TIER ${escapeHtml(t.tier)}</span>` : ''}</div><h3>${escapeHtml(name)}</h3><p class="tournament-series">${escapeHtml(series || t.organizer || 'Киберспортивный турнир')}</p><div class="tournament-meta"><span>${escapeHtml(dates || 'Расписание уточняется')}</span>${prize ? `<span>Призовой фонд · ${escapeHtml(prize)}</span>` : ''}</div><button class="details-toggle tournament-details-toggle" data-id="${escapeHtml(id)}" data-game="${escapeHtml(t.game || '')}" aria-expanded="false">Составы, сетка и результаты <span>＋</span></button><div class="tournament-detail" hidden></div></article>`;
+  return `<article class="tournament-card"><div class="tournament-topline"><span>${escapeHtml((t.game || '').toUpperCase())}</span>${t.tier ? `<span class="tournament-tier">TIER ${escapeHtml(t.tier)}</span>` : '<span class="tournament-tier">TIER —</span>'}</div><h3>${escapeHtml(name)}</h3><p class="tournament-series">${escapeHtml(series || t.organizer || 'Киберспортивный турнир')}</p><div class="tournament-meta"><span>${escapeHtml(dates || 'Расписание уточняется')}</span>${prize ? `<span>Призовой фонд · ${escapeHtml(prize)}</span>` : ''}</div><button class="details-toggle tournament-details-toggle" data-id="${escapeHtml(id)}" data-game="${escapeHtml(t.game || '')}" aria-expanded="false">Составы, сетка и результаты <span>＋</span></button><div class="tournament-detail" hidden></div></article>`;
+}
+function tournamentInfoCount(t) {
+  return [
+    Boolean(t.tier),
+    Boolean(t.begin_at || t.start_at || t.end_at),
+    Boolean(t.serie?.name || t.serie?.full_name || t.league?.name),
+    Boolean(t.organizer),
+    Boolean(t.prizepool || t.prize_pool),
+    Boolean(t.has_bracket),
+    Array.isArray(t.expected_roster) && t.expected_roster.length > 0
+  ].filter(Boolean).length;
+}
+function compareTournamentTier(a, b) {
+  const tiers = { s: 0, a: 1, b: 2, c: 3, d: 4 };
+  const tierA = tiers[String(a.tier || '').toLowerCase()] ?? 5;
+  const tierB = tiers[String(b.tier || '').toLowerCase()] ?? 5;
+  if (tierA !== tierB) return tierA - tierB;
+  const dateA = Date.parse(a.begin_at || a.start_at || a.end_at || '') || 0;
+  const dateB = Date.parse(b.begin_at || b.start_at || b.end_at || '') || 0;
+  return state.tournamentStatus === 'past' ? dateB - dateA : dateA - dateB;
 }
 function valuesOf(value) { return Array.isArray(value) ? value : value && typeof value === 'object' ? Object.values(value) : []; }
 function teamName(item) { return item?.team?.name || item?.opponent?.name || item?.participant?.name || item?.name || 'Участник'; }
@@ -204,7 +236,7 @@ function bracketMarkup(brackets, matches) {
   return `<div class="bracket-list">${data.map((row, index) => {
     const match = row.match || row;
     const teams = valuesOf(match.opponents).map(op => op.opponent?.name || op.name).filter(Boolean);
-    const score = valuesOf(match.opponents).map(op => op.score ?? op.result?.score).filter(value => value != null).join(' : ');
+    const score = valuesOf(match.opponents).map((op, opponentIndex) => scoreOf(match, op, opponentIndex)).filter(value => value != null).join(' : ');
     const previous = valuesOf(match.previous_matches).map(item => `${item.type === 'loser' ? 'Проигравший' : 'Победитель'} матча ${item.match_id}`).filter(Boolean);
     const title = match.name || match.round || match.stage || `Матч ${index + 1}`;
     const time = match.begin_at || match.scheduled_at;
@@ -227,8 +259,8 @@ async function loadTournaments() {
     const response = await fetch(`/api/tournaments?${params}`);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить турниры.');
-    const tournaments = payload.tournaments || [];
-    tournamentList.innerHTML = tournaments.length ? tournaments.map(tournamentMarkup).join('') : '<div class="empty">Подходящих турниров пока нет.</div>';
+    const tournaments = (payload.tournaments || []).filter(t => tournamentInfoCount(t) >= 2).sort(compareTournamentTier);
+    tournamentList.innerHTML = tournaments.length ? tournaments.map(tournamentMarkup).join('') : '<div class="empty">Пока нет турниров с достаточной информацией для показа.</div>';
     document.getElementById('tournaments-updated').textContent = 'обновлено ' + new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' }).format(new Date(payload.updatedAt));
   } catch (error) {
     tournamentList.innerHTML = '<div class="empty">Турниры пока не загрузились.</div>';
