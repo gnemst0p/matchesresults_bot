@@ -8,7 +8,7 @@ function readFavoriteTeams() {
   try { return JSON.parse(localStorage.getItem('gg-live-favorite-teams') || '{}') || {}; }
   catch { return {}; }
 }
-const state = { game: 'all', status: 'live', busy: false, date: moscowToday(), tournamentStatus: 'running', favoritesOnly: false, favorites: readFavoriteTeams(), searchMode: false, calendarStart: null };
+const state = { game: 'all', status: 'live', busy: false, date: moscowToday(), tournamentStatus: 'running', favoritesOnly: false, favorites: readFavoriteTeams(), notifications: {}, searchMode: false, calendarStart: null };
 const list = document.getElementById('match-list');
 const notice = document.getElementById('notice');
 const titles = { live: 'Идут прямо сейчас', upcoming: 'Предстоящие матчи', past: 'Завершённые матчи' };
@@ -290,7 +290,11 @@ document.getElementById('refresh').addEventListener('click', () => state.searchM
 function teamRosterMarkup(payload, game, teamName, teamId) {
   const players = valuesOf(payload.players);
   const favorite = isFavorite(game, teamId);
-  const head = `<div class="team-roster-heading"><strong>${escapeHtml(payload.team?.name || teamName)}</strong><button class="team-favorite-action favorite-team-toggle" type="button" data-favorite-key="${escapeHtml(favoriteKey(game,teamId))}" data-game="${game}" data-team-id="${escapeHtml(teamId)}" data-team-name="${escapeHtml(teamName)}" aria-pressed="${favorite}">${favorite ? '★ Убрать из избранного' : '☆ В избранное'}</button></div>`;
+  const key = favoriteKey(game, teamId);
+  const notificationControl = tg?.initData
+    ? `<button class="team-favorite-action notification-toggle" type="button" data-notification-key="${escapeHtml(key)}" data-game="${escapeHtml(game)}" data-team-id="${escapeHtml(teamId)}" data-team-name="${escapeHtml(teamName)}" aria-pressed="${Boolean(state.notifications[key])}">${state.notifications[key] ? '🔔 Уведомления включены' : '♧ Уведомлять о матчах'}</button><span class="notification-notice" aria-live="polite"></span>`
+    : '<span class="detail-muted">Уведомления доступны при открытии мини-приложения через Telegram.</span>';
+  const head = `<div class="team-roster-heading"><strong>${escapeHtml(payload.team?.name || teamName)}</strong><div class="team-actions"><button class="team-favorite-action favorite-team-toggle" type="button" data-favorite-key="${escapeHtml(key)}" data-game="${escapeHtml(game)}" data-team-id="${escapeHtml(teamId)}" data-team-name="${escapeHtml(teamName)}" aria-pressed="${favorite}">${favorite ? '★ Убрать из избранного' : '☆ В избранное'}</button>${notificationControl}</div></div>`;
   const roster = players.length ? (() => {
   const sourceNote = payload.source === 'tournament' ? 'Состав на этом турнире' : 'Состав команды по данным PandaScore';
   const site = game === 'dota2' ? 'Liquipedia' : 'HLTV';
@@ -333,9 +337,15 @@ async function loadTeamPanel(teamButton, panel) {
     if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить страницу команды.');
     panel.innerHTML = teamRosterMarkup(payload, teamButton.dataset.game, teamButton.dataset.teamName, teamButton.dataset.teamId);
     panel.dataset.loaded = 'true';
+    await refreshNotificationSubscriptions(panel);
   } catch (error) { panel.innerHTML = `<span class="detail-muted">${escapeHtml(error.message)}</span>`; }
 }
 async function handleTeamClicks(event) {
+  const notificationButton = event.target.closest('.notification-toggle');
+  if (notificationButton) {
+    await toggleNotification(notificationButton);
+    return;
+  }
   const favoriteButton = event.target.closest('.favorite-team-toggle');
   if (favoriteButton) {
     saveFavorite(favoriteButton.dataset.game, favoriteButton.dataset.teamId, favoriteButton.dataset.teamName);
@@ -351,6 +361,46 @@ async function handleTeamClicks(event) {
     await loadTeamPanel(teamButton, panel);
     return;
   }
+}
+async function refreshNotificationSubscriptions(panel) {
+  if (!tg?.initData) return;
+  try {
+    const response = await fetch('/api/notifications', { headers: { 'X-Telegram-Init-Data': tg.initData } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить уведомления.');
+    state.notifications = {};
+    for (const subscription of payload.subscriptions || []) state.notifications[favoriteKey(subscription.game, subscription.team_id)] = true;
+    panel.querySelectorAll('.notification-toggle').forEach(button => {
+      const enabled = Boolean(state.notifications[button.dataset.notificationKey]);
+      button.setAttribute('aria-pressed', String(enabled));
+      button.textContent = enabled ? '🔔 Уведомления включены' : '♧ Уведомлять о матчах';
+    });
+  } catch (error) {
+    const notice = panel.querySelector('.notification-notice');
+    if (notice) notice.textContent = error.message;
+  }
+}
+async function toggleNotification(button) {
+  const key = button.dataset.notificationKey;
+  const enabled = !state.notifications[key];
+  const notice = button.parentElement.querySelector('.notification-notice');
+  button.disabled = true;
+  if (notice) notice.textContent = 'Сохраняем настройку…';
+  try {
+    const response = await fetch('/api/notifications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg?.initData || '' },
+      body: JSON.stringify({ game: button.dataset.game, teamId: button.dataset.teamId, teamName: button.dataset.teamName, enabled })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Не удалось сохранить настройку.');
+    if (enabled) state.notifications[key] = true; else delete state.notifications[key];
+    button.setAttribute('aria-pressed', String(enabled));
+    button.textContent = enabled ? '🔔 Уведомления включены' : '♧ Уведомлять о матчах';
+    if (enabled && !isFavorite(button.dataset.game, button.dataset.teamId)) saveFavorite(button.dataset.game, button.dataset.teamId, button.dataset.teamName);
+    if (notice) notice.textContent = enabled ? 'Будем присылать сообщения о начале и завершении матчей.' : 'Уведомления отключены.';
+  } catch (error) { if (notice) notice.textContent = error.message; }
+  finally { button.disabled = false; }
 }
 list.addEventListener('click', async event => {
   await handleTeamClicks(event);

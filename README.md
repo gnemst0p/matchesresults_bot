@@ -19,6 +19,36 @@
 2. Разместите приложение на HTTPS хостинге, где запускается Node.js сервер, и настройте `PANDASCORE_TOKEN` как секрет окружения.
 3. Скопируйте `.env.example` в `.env` и задайте `TELEGRAM_BOT_TOKEN` (токен от BotFather) и `TELEGRAM_APP_URL` (публичный HTTPS URL приложения). При запуске сервер сам настроит кнопку меню бота; команда `/start` отправит кнопку для открытия GG Live.
 
+## Уведомления о матчах
+
+Для подписок сервер использует базу Supabase. Создайте проект, откройте **SQL Editor → New query** и выполните:
+
+```sql
+create table if not exists public.gg_live_subscriptions (
+  telegram_user_id bigint not null,
+  game text not null check (game in ('dota2', 'cs2')),
+  team_id text not null,
+  team_name text not null,
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  primary key (telegram_user_id, game, team_id)
+);
+
+create table if not exists public.gg_live_notification_events (
+  event_key text primary key,
+  created_at timestamptz not null default now()
+);
+
+alter table public.gg_live_subscriptions enable row level security;
+alter table public.gg_live_notification_events enable row level security;
+grant usage on schema public to service_role;
+grant all on public.gg_live_subscriptions, public.gg_live_notification_events to service_role;
+```
+
+В Render добавьте `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` из настроек проекта Supabase. Service Role key должен храниться только в Render как секрет; не добавляйте его в GitHub или клиентский код. После деплоя отправьте боту `/start`, откройте приложение и на странице команды включите уведомления.
+
+На бесплатном Render уведомления работают с перебоями: сервис может уснуть после 15 минут без входящих запросов, а при перезапуске проверка матчей остановится. Бесплатные проекты Supabase также могут приостановиться после недели низкой активности. Для этого режима сервер проверяет события примерно раз в минуту, когда он активен.
+
 Для Render задайте `LIQUIPEDIA_CONTACT` как отдельную переменную окружения со своим контактным email и сохраните изменения, чтобы сервис перезапустился. Значение останется в настройках Render и не должно попадать в GitHub. Без этой переменной турнирные детали PandaScore по-прежнему работают; поиск Liquipedia можно открыть ссылкой.
 
 Расширенные игровые показатели по картам и событиям могут требовать платных тарифов PandaScore. Автоматический сбор данных со страниц HLTV не используется; ссылки на HLTV можно открывать вручную. Liquipedia подключается через бесплатный MediaWiki API с соблюдением его лимитов и указанием источника.

@@ -1,6 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 loadEnv();
 const PORT = Number(process.env.PORT || 3000);
@@ -8,6 +9,8 @@ const TOKEN = process.env.PANDASCORE_TOKEN;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.TELEGRAM_APP_URL;
 const LIQUIPEDIA_CONTACT = process.env.LIQUIPEDIA_CONTACT;
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ROOT = __dirname;
 const API = 'https://api.pandascore.co';
 const gamePaths = { dota2: 'dota2', cs2: 'csgo' };
@@ -92,6 +95,60 @@ async function pandascore(pathname, params = {}) {
   const data = await response.json();
   cache.set(key, { time: Date.now(), data });
   return data;
+}
+
+function readJsonBody(req, limit = 16_384) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > limit) { reject(new Error('Запрос слишком большой.')); req.destroy(); }
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body || '{}')); }
+      catch { reject(new Error('Некорректные данные запроса.')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function telegramUserFromInitData(initData) {
+  if (!BOT_TOKEN || !initData || initData.length > 8192) throw new Error('Откройте приложение через Telegram и отправьте боту /start.');
+  const params = new URLSearchParams(initData);
+  const providedHash = params.get('hash');
+  const authDate = Number(params.get('auth_date'));
+  if (!providedHash || !/^[a-f0-9]{64}$/i.test(providedHash) || !Number.isFinite(authDate) || Math.abs(Date.now() / 1000 - authDate) > 86_400) {
+    throw new Error('Сессия Telegram устарела. Закройте мини-приложение и откройте его снова.');
+  }
+  params.delete('hash');
+  params.delete('signature');
+  const checkString = [...params.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+  const expected = crypto.createHmac('sha256', secret).update(checkString).digest();
+  const actual = Buffer.from(providedHash, 'hex');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) throw new Error('Не удалось проверить пользователя Telegram. Откройте приложение через бота.');
+  let user;
+  try { user = JSON.parse(params.get('user') || '{}'); } catch {}
+  if (!Number.isSafeInteger(Number(user?.id)) || Number(user.id) <= 0) throw new Error('Telegram не передал данные пользователя. Отправьте боту /start и откройте приложение ещё раз.');
+  return String(user.id);
+}
+
+async function supabaseRequest(pathname, options = {}) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Хранилище уведомлений не настроено: добавьте ключи Supabase в Render.');
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathname}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    },
+    signal: AbortSignal.timeout(12_000)
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Хранилище подписок ответило с кодом ${response.status}.`);
+  return text ? JSON.parse(text) : null;
 }
 
 function searchLiquipedia(game, query) {
@@ -185,6 +242,33 @@ async function handle(req, res) {
         updatedAt: new Date().toISOString()
       });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось выполнить поиск.' }); }
+  }
+  if (url.pathname === '/api/notifications') {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return send(res, 503, { error: 'Уведомления не настроены. Добавьте базу Supabase в переменные Render.' });
+    let userId;
+    try { userId = telegramUserFromInitData(req.headers['x-telegram-init-data']); }
+    catch (error) { return send(res, 401, { error: error.message }); }
+    try {
+      if (req.method === 'GET') {
+        const query = new URLSearchParams({ select: 'game,team_id,team_name', telegram_user_id: `eq.${userId}`, enabled: 'eq.true' });
+        const subscriptions = await supabaseRequest(`gg_live_subscriptions?${query}`);
+        return send(res, 200, { subscriptions });
+      }
+      if (req.method !== 'POST') return send(res, 405, { error: 'Метод не поддерживается.' });
+      const body = await readJsonBody(req);
+      const game = body.game;
+      const teamId = String(body.teamId || '');
+      const teamName = String(body.teamName || '').trim().slice(0, 120);
+      const enabled = Boolean(body.enabled);
+      if (!Object.hasOwn(gamePaths, game) || !/^[A-Za-z0-9_-]{1,32}$/.test(teamId) || !teamName) return send(res, 400, { error: 'Неверные данные команды.' });
+      const query = new URLSearchParams({ on_conflict: 'telegram_user_id,game,team_id' });
+      await supabaseRequest(`gg_live_subscriptions?${query}`, {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ telegram_user_id: userId, game, team_id: teamId, team_name: teamName, enabled })
+      });
+      return send(res, 200, { ok: true, enabled });
+    } catch (error) { return send(res, 502, { error: error.message || 'Не удалось сохранить настройку уведомлений.' }); }
   }
   if (url.pathname === '/api/tournament') {
     if (!TOKEN) return send(res, 503, { error: 'Для турниров добавьте PANDASCORE_TOKEN.' });
@@ -289,4 +373,79 @@ async function startTelegramBot() {
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
+}
+
+let notificationCheckBusy = false;
+async function notificationMatches(game, status) {
+  const url = new URL(`${API}/${gamePaths[game]}/matches/${status}`);
+  url.searchParams.set('per_page', '100');
+  url.searchParams.set('sort', '-begin_at');
+  url.searchParams.set('token', TOKEN);
+  const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`PandaScore уведомления (${game}/${status}): HTTP ${response.status}`);
+  return response.json();
+}
+
+async function checkTelegramNotifications() {
+  if (notificationCheckBusy || !TOKEN || !BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+  notificationCheckBusy = true;
+  try {
+    const subscriptions = await supabaseRequest('gg_live_subscriptions?select=telegram_user_id,game,team_id,team_name&enabled=eq.true');
+    const active = Array.isArray(subscriptions) ? subscriptions : [];
+    if (!active.length) return;
+    const safeFetch = (game, status) => notificationMatches(game, status).catch(error => { console.error(error.message); return []; });
+    const [dotaRunning, dotaFinished, csRunning, csFinished] = await Promise.all([
+      safeFetch('dota2', 'running'), safeFetch('dota2', 'past'), safeFetch('cs2', 'running'), safeFetch('cs2', 'past')
+    ]);
+    const recentEnough = match => {
+      const date = match.status === 'running' ? (match.begin_at || match.scheduled_at) : (match.end_at || match.modified_at || match.begin_at);
+      return !date || Date.now() - Date.parse(date) < 4 * 60 * 60_000;
+    };
+    const matches = [
+      ...(dotaRunning || []).filter(recentEnough).map(match => ({ ...match, game: 'dota2', event: 'started' })),
+      ...(csRunning || []).filter(recentEnough).map(match => ({ ...match, game: 'cs2', event: 'started' })),
+      ...(dotaFinished || []).filter(match => match.status === 'finished' && recentEnough(match)).map(match => ({ ...match, game: 'dota2', event: 'finished' })),
+      ...(csFinished || []).filter(match => match.status === 'finished' && recentEnough(match)).map(match => ({ ...match, game: 'cs2', event: 'finished' }))
+    ];
+    const pending = [];
+    for (const match of matches) {
+      for (const opponent of match.opponents || []) {
+        const teamId = String(opponent.opponent?.id ?? '');
+        if (!teamId) continue;
+        for (const sub of active) {
+          if (sub.game === match.game && String(sub.team_id) === teamId) pending.push({ sub, match, eventKey: `${sub.telegram_user_id}:${match.game}:${match.id}:${match.event}` });
+        }
+      }
+    }
+    if (!pending.length) return;
+    const keyList = [...new Set(pending.map(item => item.eventKey))];
+    const filter = `in.(${keyList.map(key => `"${key}"`).join(',')})`;
+    const existing = await supabaseRequest(`gg_live_notification_events?${new URLSearchParams({ select: 'event_key', event_key: filter })}`);
+    const existingKeys = new Set((existing || []).map(item => item.event_key));
+    for (const item of pending) {
+      if (existingKeys.has(item.eventKey)) continue;
+      const opponents = (item.match.opponents || []).map(side => side.opponent?.name).filter(Boolean);
+      const results = (item.match.opponents || []).map(side => side.score).filter(score => score !== undefined && score !== null);
+      const score = results.length >= 2 ? ` Счёт: ${results[0]} : ${results[1]}.` : '';
+      const stage = item.match.tournament?.name || item.match.league?.name || '';
+      const when = item.match.event === 'started' ? 'начался' : 'завершился';
+      const gameName = item.match.game === 'dota2' ? 'Dota 2' : 'CS2';
+      const text = `${gameName}: матч команды ${item.sub.team_name} ${when}.\n${opponents.join(' — ') || item.sub.team_name}${score}${stage ? `\nТурнир: ${stage}` : ''}`;
+      try {
+        await telegram('sendMessage', { chat_id: item.sub.telegram_user_id, text, reply_markup: { inline_keyboard: [[{ text: 'Открыть GG Live', web_app: { url: APP_URL } }]] } });
+        await supabaseRequest('gg_live_notification_events', {
+          method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
+          body: JSON.stringify({ event_key: item.eventKey })
+        });
+        existingKeys.add(item.eventKey);
+      } catch (error) { console.error('Telegram notification failed:', error.message); }
+    }
+  } catch (error) { console.error('Notification check failed:', error.message); }
+  finally { notificationCheckBusy = false; }
+}
+
+if (TOKEN && BOT_TOKEN && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  setTimeout(checkTelegramNotifications, 20_000);
+  setInterval(checkTelegramNotifications, 60_000);
+  console.log('Best-effort Telegram notifications are enabled.');
 }
