@@ -181,6 +181,31 @@ async function handle(req, res) {
       return send(res, 200, { tournament, rosters, standings, brackets, matches, game, liquipediaConfigured: Boolean(LIQUIPEDIA_CONTACT), updatedAt: new Date().toISOString() });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить сведения о турнире.' }); }
   }
+  if (url.pathname === '/api/team') {
+    if (!TOKEN) return send(res, 503, { error: 'Для загрузки составов нужен PANDASCORE_TOKEN.' });
+    const game = url.searchParams.get('game');
+    const teamId = url.searchParams.get('id');
+    const tournamentId = url.searchParams.get('tournament');
+    if (!Object.hasOwn(gamePaths, game) || !teamId || !/^[A-Za-z0-9_-]+$/.test(teamId) || (tournamentId && !/^[A-Za-z0-9_-]+$/.test(tournamentId))) return send(res, 400, { error: 'Неверные параметры команды.' });
+    try {
+      const teamPath = `/${gamePaths[game]}/teams/${encodeURIComponent(teamId)}`;
+      const team = await pandascore(teamPath);
+      let tournamentRoster = null;
+      if (tournamentId) {
+        const rosters = await pandascore(`/${gamePaths[game]}/tournaments/${encodeURIComponent(tournamentId)}/rosters`).catch(() => []);
+        const entries = Array.isArray(rosters) ? rosters : Object.values(rosters || {});
+        tournamentRoster = entries.find(entry => String(entry.team?.id ?? entry.team_id ?? '') === String(teamId)) || null;
+      }
+      const rosterPlayers = tournamentRoster?.players || tournamentRoster?.roster || tournamentRoster?.expected_roster;
+      const teamPlayers = team.players || team.roster || [];
+      return send(res, 200, {
+        team,
+        players: Array.isArray(rosterPlayers) && rosterPlayers.length ? rosterPlayers : Array.isArray(teamPlayers) ? teamPlayers : [],
+        source: Array.isArray(rosterPlayers) && rosterPlayers.length ? 'tournament' : 'team',
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить состав команды.' }); }
+  }
   if (url.pathname === '/api/liquipedia') {
     const game = url.searchParams.get('game');
     const query = (url.searchParams.get('q') || '').trim().slice(0, 120);

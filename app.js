@@ -87,11 +87,16 @@ function detailsMarkup(match, id, tournament) {
   const hltv = match.game === 'cs2' ? `<div class="detail-item detail-streams"><span>Дополнительный источник</span><div class="stream-links"><a class="stream-link" href="https://www.hltv.org/search?query=${encodeURIComponent([tournament, (match.opponents || []).map(team => team?.opponent?.name).filter(Boolean).join(' ')].filter(Boolean).join(' '))}" target="_blank" rel="noopener noreferrer">Найти матч на HLTV ↗</a></div></div>` : '';
   return `<div class="match-details" id="${id}" hidden><div class="details-grid">${items.map(([label, value]) => `<div class="detail-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}<div class="detail-item detail-streams"><span>Трансляции</span><div class="stream-links">${streamMarkup(match)}</div></div>${hltv}</div></div>`;
 }
-function teamMarkup(team, side) {
+function teamMarkup(team, side, match) {
   const name = team?.opponent?.name || (side === 'left' ? 'Команда 1' : 'Команда 2');
   const image = team?.opponent?.image_url;
+  const teamId = team?.opponent?.id;
   const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
-  return `<div class="team ${side}">${image ? `<img class="team-logo" data-initials="${escapeHtml(initials)}" src="${escapeHtml(image)}" alt="" loading="lazy">` : `<span class="team-logo team-fallback">${escapeHtml(initials)}</span>`}<span class="team-name">${escapeHtml(name)}</span></div>`;
+  const logo = image ? `<img class="team-logo" data-initials="${escapeHtml(initials)}" src="${escapeHtml(image)}" alt="" loading="lazy">` : `<span class="team-logo team-fallback">${escapeHtml(initials)}</span>`;
+  const content = `${logo}<span class="team-name">${escapeHtml(name)}</span>`;
+  if (teamId == null) return `<div class="team ${side}">${content}</div>`;
+  const panelId = `team-roster-${String(match.id || match.slug || 'match').replace(/[^A-Za-z0-9_-]/g, '-')}-${teamId}`;
+  return `<button class="team ${side} team-open" type="button" data-team-id="${escapeHtml(teamId)}" data-game="${escapeHtml(match.game)}" data-tournament-id="${escapeHtml(match.tournament_id || match.tournament?.id || '')}" data-panel-id="${panelId}" data-team-name="${escapeHtml(name)}" aria-label="Состав команды ${escapeHtml(name)}" aria-expanded="false" aria-controls="${panelId}">${content}</button>`;
 }
 function cardMarkup(match) {
   const opponents = match.opponents || [];
@@ -112,7 +117,14 @@ function cardMarkup(match) {
   const scoreNote = !scoresReady && (live || state.status === 'past') ? `<div class="score-note">${live ? 'LIVE-СЧЁТ НЕ ПЕРЕДАН ИСТОЧНИКОМ' : 'ИТОГОВЫЙ СЧЁТ НЕ ОПУБЛИКОВАН'}</div>` : '';
   const center = live || state.status === 'past' ? `${scores}${scoreNote}` : `<span class="score pending">${date ? escapeHtml(new Intl.DateTimeFormat('ru-RU', { timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit' }).format(new Date(date))) : 'TBA'}</span>`;
   const detailsId = `match-details-${escapeHtml(match.id || match.slug || `${match.game}-${date || 'match'}`)}`;
-  return `<article class="match-card ${klass}"><span class="match-status">${status}</span>${teamMarkup(first,'left')}<div class="scoreline">${center}<div class="series">${escapeHtml(round.toUpperCase())}</div><div class="match-meta">${game} · ${escapeHtml(tournament)}</div></div>${teamMarkup(second,'right')}<button class="details-toggle" type="button" aria-expanded="false" aria-controls="${detailsId}">Подробнее <span aria-hidden="true">＋</span></button>${detailsMarkup(match, detailsId, tournament)}</article>`;
+  const firstTeam = teamMarkup(first, 'left', match);
+  const secondTeam = teamMarkup(second, 'right', match);
+  const rosterPanels = [first, second].map(team => {
+    if (team?.opponent?.id == null) return '';
+    const panelId = `team-roster-${String(match.id || match.slug || 'match').replace(/[^A-Za-z0-9_-]/g, '-')}-${team.opponent.id}`;
+    return `<div class="team-roster-panel" id="${panelId}" hidden aria-live="polite"></div>`;
+  }).join('');
+  return `<article class="match-card ${klass}"><span class="match-status">${status}</span>${firstTeam}<div class="scoreline">${center}<div class="series">${escapeHtml(round.toUpperCase())}</div><div class="match-meta">${game} · ${escapeHtml(tournament)}</div></div>${secondTeam}${rosterPanels}<button class="details-toggle" type="button" aria-expanded="false" aria-controls="${detailsId}">Подробнее <span aria-hidden="true">＋</span></button>${detailsMarkup(match, detailsId, tournament)}</article>`;
 }
 function showLoading() { list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; }
 function showEmpty() {
@@ -170,7 +182,42 @@ document.querySelectorAll('.status-tab').forEach(button => button.addEventListen
   if (state.status === 'tournaments') loadTournaments(); else loadMatches();
 }));
 document.getElementById('refresh').addEventListener('click', loadMatches);
-list.addEventListener('click', event => {
+function teamRosterMarkup(payload, game, teamName) {
+  const players = valuesOf(payload.players);
+  if (!players.length) return `<strong>${escapeHtml(teamName)}</strong><p class="detail-muted">Состав пока не опубликован в PandaScore.</p>`;
+  const sourceNote = payload.source === 'tournament' ? 'Состав на этом турнире' : 'Состав команды по данным PandaScore';
+  const site = game === 'dota2' ? 'Liquipedia' : 'HLTV';
+  const siteUrl = game === 'dota2' ? 'https://liquipedia.net/dota2/index.php?search=' : 'https://www.hltv.org/search?query=';
+  return `<div class="team-roster-heading"><strong>${escapeHtml(teamName)}</strong><span>${sourceNote}</span></div><ul class="team-roster-players">${players.map(player => {
+    const nickname = player.name || player.nickname || player.slug || player.full_name || 'Игрок';
+    const role = player.role || player.position;
+    const href = `${siteUrl}${encodeURIComponent(nickname)}`;
+    return `<li><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(nickname)} ↗</a>${role ? `<span>${escapeHtml(role)}</span>` : ''}</li>`;
+  }).join('')}</ul><span class="roster-source">Профили игроков откроются в ${site}.</span>`;
+}
+list.addEventListener('click', async event => {
+  const teamButton = event.target.closest('.team-open');
+  if (teamButton) {
+    const panel = document.getElementById(teamButton.dataset.panelId);
+    const expanded = teamButton.getAttribute('aria-expanded') === 'true';
+    teamButton.setAttribute('aria-expanded', String(!expanded));
+    panel.hidden = expanded;
+    if (expanded) return;
+    if (panel.dataset.loaded) return;
+    panel.innerHTML = '<span class="detail-muted">Загружаем состав…</span>';
+    try {
+      const params = new URLSearchParams({ game: teamButton.dataset.game, id: teamButton.dataset.teamId });
+      if (teamButton.dataset.tournamentId) params.set('tournament', teamButton.dataset.tournamentId);
+      const response = await fetch(`/api/team?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить состав.');
+      panel.innerHTML = teamRosterMarkup(payload, teamButton.dataset.game, teamButton.dataset.teamName);
+      panel.dataset.loaded = 'true';
+    } catch (error) {
+      panel.innerHTML = `<span class="detail-muted">${escapeHtml(error.message)}</span>`;
+    }
+    return;
+  }
   const button = event.target.closest('.details-toggle');
   if (!button) return;
   const panel = document.getElementById(button.getAttribute('aria-controls'));
