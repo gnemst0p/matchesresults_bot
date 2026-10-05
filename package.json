@@ -1,0 +1,10 @@
+{
+  "name": "gg-live-telegram-mini-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram Mini App for live Dota 2 and CS2 esports scores",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=20" }
+}
