@@ -14,3 +14,29 @@
 .stream-link:hover{background:#20291a}
 .detail-muted{font-size:10px;color:#99a3ac}
 @media(max-width:500px){.details-grid{gap:12px 9px}.detail-item strong{font-size:10px}.details-toggle{font-size:9px}}
+.date-filter,.tournament-filter{display:flex;align-items:center;gap:8px;margin:0 0 18px;flex-wrap:wrap}
+#date-filter[hidden],#tournament-filter[hidden],#match-section[hidden],#tournament-section[hidden]{display:none!important}
+.date-shortcut,.tournament-tab{border:1px solid #28333c;border-radius:6px;background:#111820;color:#98a4ad;padding:9px 12px;font:600 10px Manrope,sans-serif;cursor:pointer}
+.date-shortcut.active,.tournament-tab.active{border-color:#566d31;background:#1a2418;color:var(--lime)}
+.date-custom{display:flex;align-items:center;gap:8px;margin-left:auto;color:#87939c;font:10px Manrope,sans-serif}
+.date-custom input{color:#d9e0e4;background:#111820;border:1px solid #28333c;border-radius:6px;padding:8px;font:11px "DM Mono",monospace;color-scheme:dark}
+.tournament-card{padding:17px;border:1px solid #29343d;border-radius:9px;background:linear-gradient(140deg,#151e26,#10161c);margin-bottom:12px}
+.tournament-topline{display:flex;justify-content:space-between;color:var(--lime);font:9px "DM Mono",monospace;letter-spacing:.6px}
+.tournament-tier{color:#c7a86a}
+.tournament-card h3{margin:10px 0 4px;color:#e9eef0;font-size:16px}
+.tournament-series{margin:0;color:#8d9aa4;font-size:11px}
+.tournament-meta{display:flex;flex-wrap:wrap;gap:10px 20px;margin:13px 0;color:#a3adb5;font:10px "DM Mono",monospace}
+.tournament-card>.details-toggle{width:100%;justify-content:center;margin-top:5px;padding:10px 8px 0;border-top:1px solid #263139}
+.tournament-detail{border-top:1px solid #263139;margin-top:12px;padding-top:13px}
+.tournament-detail[hidden]{display:none}
+.tournament-detail h4{margin:18px 0 9px;color:#c7d0d5;font-size:12px}
+.tournament-info{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tournament-rosters,.standing-list,.bracket-list{display:grid;gap:7px}
+.roster-team,.standing-row,.bracket-match{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;background:#111820;border:1px solid #202b33;border-radius:6px;color:#cad2d7;font-size:10px}
+.roster-team{flex-direction:column;gap:4px}.roster-team span,.standing-row span,.bracket-match small{color:#82909a;line-height:1.5}
+.standing-row b{color:var(--lime);min-width:18px}.standing-row strong{flex:1}
+.bracket-match{flex-direction:column;gap:4px}.bracket-match>span{color:#82909a;font:9px "DM Mono",monospace;text-transform:uppercase}
+.bracket-match strong{font-size:10px}.data-credit{margin-top:16px;color:#66747e;font:9px "DM Mono",monospace}
+.liquipedia-results{margin-top:17px}.liquipedia-results h4{margin-top:0}.liquipedia-results>small{display:block;margin-top:9px;color:#71808a;font-size:9px}.liquipedia-results>small a{color:#9da9b1}
+.liquipedia-items{display:grid;gap:7px}.liquipedia-result{display:flex;flex-direction:column;gap:5px;padding:9px 10px;border:1px solid #202b33;border-radius:6px;background:#111820;color:#d3dade;text-decoration:none;font-size:10px}.liquipedia-result span{color:#87949e;line-height:1.5}.liquipedia-result:hover{border-color:#566d31}
+@media(max-width:500px){.date-filter,.tournament-filter{gap:6px}.date-shortcut,.tournament-tab{padding:8px 9px;font-size:9px}.date-custom{width:100%;margin:4px 0 0}.tournament-meta{flex-direction:column;gap:5px}.standing-row{flex-wrap:wrap}.standing-row span{width:100%;padding-left:28px}}

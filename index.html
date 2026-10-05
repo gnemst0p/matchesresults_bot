@@ -39,12 +39,32 @@
       <button class="status-tab active" data-status="live"><span class="tab-dot"></span>Сейчас <span class="tab-count" id="live-count">0</span></button>
       <button class="status-tab" data-status="upcoming">Расписание</button>
       <button class="status-tab" data-status="past">Результаты</button>
+      <button class="status-tab" data-status="tournaments">Турниры</button>
     </nav>
 
-    <section class="match-section">
+    <div class="date-filter" id="date-filter" hidden aria-label="Выбрать дату матчей">
+      <button class="date-shortcut" data-offset="-1">Вчера</button>
+      <button class="date-shortcut active" data-offset="0">Сегодня</button>
+      <button class="date-shortcut" data-offset="1">Завтра</button>
+      <label class="date-custom"><span>Другая дата</span><input type="date" id="match-date"></label>
+    </div>
+
+    <div class="tournament-filter" id="tournament-filter" hidden aria-label="Фильтр турниров">
+      <button class="tournament-tab active" data-tournament-status="running">Сейчас</button>
+      <button class="tournament-tab" data-tournament-status="upcoming">Скоро</button>
+      <button class="tournament-tab" data-tournament-status="past">Прошедшие</button>
+    </div>
+
+    <section class="match-section" id="match-section">
       <div class="section-heading"><div><div class="section-kicker" id="date-label">СЕГОДНЯ</div><h2 id="section-title">Идут прямо сейчас</h2></div><span class="updated" id="updated-at">—</span></div>
       <div id="match-list" class="match-list" aria-live="polite"></div>
       <div id="notice" class="notice hidden"></div>
+    </section>
+
+    <section class="match-section tournament-section" id="tournament-section" hidden>
+      <div class="section-heading"><div><div class="section-kicker">DOTA 2 · CS2</div><h2>Турниры</h2></div><span class="updated" id="tournaments-updated">—</span></div>
+      <div id="tournament-list" class="match-list"></div>
+      <div id="tournament-notice" class="notice hidden"></div>
     </section>
 
     <footer class="footer"><span class="footer-brand">GG<span>.</span> LIVE</span><span>ДАННЫЕ <a href="https://pandascore.co" target="_blank" rel="noreferrer">PANDASCORE</a></span><span class="auto-refresh"><i></i>АВТООБНОВЛЕНИЕ · 60 СЕК</span></footer>
