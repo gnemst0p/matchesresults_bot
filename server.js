@@ -4,14 +4,22 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 loadEnv();
+function supabaseProjectUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (!['https:', 'http:'].includes(url.protocol)) return '';
+    // Render must contain the project base URL. Strip accidental `/rest/v1` or `/auth/v1` suffixes.
+    return url.origin;
+  } catch { return ''; }
+}
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.PANDASCORE_TOKEN;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.TELEGRAM_APP_URL;
 const LIQUIPEDIA_CONTACT = process.env.LIQUIPEDIA_CONTACT;
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = supabaseProjectUrl(process.env.SUPABASE_URL);
+const SUPABASE_SECRET_KEY = (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_PUBLISHABLE_KEY = (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
 const ROOT = __dirname;
 const API = 'https://api.pandascore.co';
 const gamePaths = { dota2: 'dota2', cs2: 'csgo' };
@@ -186,7 +194,7 @@ function searchLiquipedia(game, query) {
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname === '/api/config') return send(res, 200, { supabaseUrl: SUPABASE_URL || '', supabasePublishableKey: SUPABASE_PUBLISHABLE_KEY });
-  if (url.pathname === '/api/health') return send(res, 200, { ok: true, configured: Boolean(TOKEN), notificationsConfigured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY && BOT_TOKEN) });
+  if (url.pathname === '/api/health') return send(res, 200, { ok: true, configured: Boolean(TOKEN), notificationsConfigured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY && BOT_TOKEN), accountAuthConfigured: Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY) });
   if (url.pathname === '/api/matches') {
     if (!TOKEN) return send(res, 503, { error: 'Добавьте PANDASCORE_TOKEN в файл .env, чтобы загрузить актуальные матчи.' });
     const game = url.searchParams.get('game') || 'all';

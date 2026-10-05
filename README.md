@@ -87,7 +87,7 @@ create policy "Delete own favorites" on public.gg_live_user_favorites
 
 В Render у сервиса откройте **Environment** и добавьте:
 
-- `SUPABASE_URL` — Project URL из **Supabase → Project Settings → API** (обычно он уже добавлен для уведомлений);
+- `SUPABASE_URL` — корневой Project URL из **Supabase → Project Settings → API**, например `https://abcdefgh.supabase.co`. Не добавляйте к нему `/rest/v1`, `/auth/v1` или адрес панели Supabase;
 - `SUPABASE_PUBLISHABLE_KEY` — новый **Publishable key** из настроек API. Если в панели отображается старый ключ `anon`, его можно указать вместо publishable key.
 
 Существующий `SUPABASE_SECRET_KEY` оставьте только для серверных уведомлений. Никогда не вставляйте secret/service-role key в клиентский код и не указывайте его как `SUPABASE_PUBLISHABLE_KEY`. Нажмите **Save Changes** и дождитесь повторного деплоя Render.
@@ -98,7 +98,7 @@ create policy "Delete own favorites" on public.gg_live_user_favorites
 2. Укажите identifier `custom:telegram`, имя `Telegram`, issuer `https://oauth.telegram.org`, scopes `openid profile`, и включите **Email optional**. Callback URL, который покажет Supabase, скопируйте.
 3. В Telegram откройте мини-приложение @BotFather, выберите используемого GG Live бота → **Login Widget** → **OpenID Connect Login**. Добавьте адрес сайта `https://matchesresults-bot.onrender.com` и скопированный callback Supabase в список разрешённых адресов. Скопируйте выданные **Client ID** и **Client Secret**.
 4. Вернитесь в настройки провайдера Supabase, вставьте эти Client ID и Client Secret и сохраните провайдера.
-5. В **Authentication → URL Configuration** укажите Site URL `https://matchesresults-bot.onrender.com` и добавьте этот же адрес в Redirect URLs.
+5. В **Authentication → URL Configuration** укажите Site URL `https://matchesresults-bot.onrender.com` (обязательно вместе с `https://`) и добавьте этот же адрес в Redirect URLs. Это адрес сайта, куда пользователь возвращается после входа. В BotFather при этом должен остаться callback Supabase, который начинается с `https://<project-ref>.supabase.co/auth/v1/callback`.
 
 Client Secret от BotFather — это отдельный секрет авторизации, не `TELEGRAM_BOT_TOKEN`. Храните его только в настройках провайдера Supabase. Для входа через Telegram Supabase использует официальный OIDC с проверкой токена; адрес сайта и callback должны точно совпадать с добавленными в BotFather.
 
