@@ -470,18 +470,63 @@ function standingsMarkup(standings) {
   return `<div class="standing-list">${rows.map((row, index) => `<div class="standing-row"><b>${escapeHtml(row.rank ?? row.position ?? index + 1)}</b><strong>${escapeHtml(teamName(row))}</strong><span>${escapeHtml([row.points != null ? `${row.points} очк.` : '', row.wins != null ? `Побед ${row.wins}` : '', row.losses != null ? `Поражений ${row.losses}` : ''].filter(Boolean).join(' · ') || row.description || '—')}</span></div>`).join('')}</div>`;
 }
 function bracketMarkup(brackets, matches) {
-  const rows = valuesOf(brackets);
-  const data = rows.length ? rows : valuesOf(matches);
-  if (!data.length) return '<p class="detail-muted">Сетка для этого турнира не опубликована.</p>';
-  return `<div class="bracket-list">${data.map((row, index) => {
-    const match = row.match || row;
-    const teams = valuesOf(match.opponents).map(op => op.opponent?.name || op.name).filter(Boolean);
-    const score = valuesOf(match.opponents).map((op, opponentIndex) => scoreOf(match, op, opponentIndex)).filter(value => value != null).join(' : ');
-    const previous = valuesOf(match.previous_matches).map(item => `${item.type === 'loser' ? 'Проигравший' : 'Победитель'} матча ${item.match_id}`).filter(Boolean);
-    const title = match.name || match.round || match.stage || `Матч ${index + 1}`;
-    const time = match.begin_at || match.scheduled_at;
-    return `<div class="bracket-match"><span>${escapeHtml(title)}</span><strong>${escapeHtml(teams.join(' — ') || previous.join(' — ') || 'Участники уточняются')}${score ? ` · ${escapeHtml(score)}` : ''}</strong><small>${escapeHtml(time ? tournamentDate(time) : (match.status || ''))}</small></div>`;
-  }).join('')}</div>`;
+  const bracketRows = [];
+  const visited = new Set();
+  function flatten(value, inheritedRound = '') {
+    if (Array.isArray(value)) { value.forEach(item => flatten(item, inheritedRound)); return; }
+    if (!value || typeof value !== 'object') return;
+    const match = value.match && typeof value.match === 'object' ? value.match : value;
+    if (Array.isArray(match.opponents) || Array.isArray(match.previous_matches)) {
+      const id = String(match.id || match.match_id || `${match.name || ''}:${match.begin_at || ''}`);
+      if (!visited.has(id)) { visited.add(id); bracketRows.push({ match, round: value.round_name || value.round?.name || value.stage?.name || value.name || inheritedRound }); }
+      return;
+    }
+    const label = value.round_name || value.round?.name || value.stage?.name || value.name || inheritedRound;
+    for (const [key, child] of Object.entries(value)) if (child && typeof child === 'object') flatten(child, label || key);
+  }
+  const matchRows = valuesOf(matches);
+  matchRows.forEach(match => bracketRows.push({ match, round: match.round_name || match.round?.name || match.stage?.name || match.stage || '' }));
+  flatten(brackets);
+  if (!bracketRows.length) return '<p class="detail-muted">Для этого турнира PandaScore пока не опубликовал сетку или список матчей.</p>';
+  const mergedRows = new Map();
+  for (const row of bracketRows) {
+    const id = String(row.match.id || row.match.match_id || `${row.match.name || ''}:${row.match.begin_at || ''}`);
+    const previous = mergedRows.get(id);
+    if (!previous) mergedRows.set(id, row);
+    else mergedRows.set(id, {
+      match: { ...row.match, ...previous.match, previous_matches: previous.match.previous_matches?.length ? previous.match.previous_matches : row.match.previous_matches },
+      round: previous.round || row.round
+    });
+  }
+  const allRows = [...mergedRows.values()];
+  const rounds = new Map();
+  for (const row of allRows) {
+    const round = typeof row.round === 'string' ? row.round : '';
+    const label = round || 'Матчи турнира';
+    if (!rounds.has(label)) rounds.set(label, []);
+    rounds.get(label).push(row.match);
+  }
+  const roundRank = label => {
+    const value = label.toLowerCase();
+    if (/final/.test(value) && !/semi|quarter/.test(value)) return 50;
+    if (/semi/.test(value)) return 40;
+    if (/quarter/.test(value)) return 30;
+    if (/round of 16|sixteen|1\/8/.test(value)) return 20;
+    if (/round of 32|thirty.?two|1\/16/.test(value)) return 10;
+    return 25;
+  };
+  const ordered = [...rounds.entries()].sort((a, b) => roundRank(a[0]) - roundRank(b[0]) || a[0].localeCompare(b[0]));
+  return `<div class="bracket-rounds">${ordered.map(([round, roundMatches]) => `<section class="bracket-round"><h5>${escapeHtml(round)}</h5>${roundMatches.map(match => {
+    const opponents = valuesOf(match.opponents);
+    const previous = valuesOf(match.previous_matches).map(item => `${item.type === 'loser' ? 'Проигравший' : 'Победитель'} матча ${item.match_id}`);
+    const time = match.begin_at || match.scheduled_at || match.original_scheduled_at;
+    return `<article class="bracket-game">${opponents.length ? opponents.slice(0, 2).map((opponent, index) => {
+      const name = opponent.opponent?.name || opponent.name || 'Участник не определён';
+      const score = scoreOf(match, opponent, index);
+      const winner = match.winner_id != null && String(match.winner_id) === String(opponent.opponent?.id);
+      return `<div class="bracket-team${winner ? ' winner' : ''}"><span>${escapeHtml(name)}</span><b>${score == null ? '—' : escapeHtml(score)}</b></div>`;
+    }).join('') : `<div class="bracket-team pending"><span>${escapeHtml(previous.join(' / ') || 'Участники уточняются')}</span></div>`}${previous.length && opponents.length ? `<span class="bracket-dependency">Ветка: ${escapeHtml(previous.join(' · '))}</span>` : ''}<small>${escapeHtml(statusLabel(match.status))}${time ? ` · ${escapeHtml(tournamentDate(time))}` : ''}</small></article>`;
+  }).join('')}</section>`).join('')}</div>`;
 }
 function tournamentDetailMarkup(data) {
   const t = data.tournament || {};

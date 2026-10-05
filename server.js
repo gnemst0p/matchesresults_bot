@@ -10,7 +10,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.TELEGRAM_APP_URL;
 const LIQUIPEDIA_CONTACT = process.env.LIQUIPEDIA_CONTACT;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ROOT = __dirname;
 const API = 'https://api.pandascore.co';
 const gamePaths = { dota2: 'dota2', cs2: 'csgo' };
@@ -135,12 +135,12 @@ function telegramUserFromInitData(initData) {
 }
 
 async function supabaseRequest(pathname, options = {}) {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Хранилище уведомлений не настроено: добавьте ключи Supabase в Render.');
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) throw new Error('Хранилище уведомлений не настроено: добавьте ключи Supabase в Render.');
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${pathname}`, {
     ...options,
     headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SECRET_KEY,
+      ...(SUPABASE_SECRET_KEY.startsWith('sb_secret_') ? {} : { Authorization: `Bearer ${SUPABASE_SECRET_KEY}` }),
       'Content-Type': 'application/json',
       ...(options.headers || {})
     },
@@ -184,7 +184,7 @@ function searchLiquipedia(game, query) {
 
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (url.pathname === '/api/health') return send(res, 200, { ok: true, configured: Boolean(TOKEN) });
+  if (url.pathname === '/api/health') return send(res, 200, { ok: true, configured: Boolean(TOKEN), notificationsConfigured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY && BOT_TOKEN) });
   if (url.pathname === '/api/matches') {
     if (!TOKEN) return send(res, 503, { error: 'Добавьте PANDASCORE_TOKEN в файл .env, чтобы загрузить актуальные матчи.' });
     const game = url.searchParams.get('game') || 'all';
@@ -244,7 +244,7 @@ async function handle(req, res) {
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось выполнить поиск.' }); }
   }
   if (url.pathname === '/api/notifications') {
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return send(res, 503, { error: 'Уведомления не настроены. Добавьте базу Supabase в переменные Render.' });
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) return send(res, 503, { error: 'Уведомления не настроены. В Render добавьте SUPABASE_URL и SUPABASE_SECRET_KEY.' });
     let userId;
     try { userId = telegramUserFromInitData(req.headers['x-telegram-init-data']); }
     catch (error) { return send(res, 401, { error: error.message }); }
@@ -276,7 +276,8 @@ async function handle(req, res) {
     const id = url.searchParams.get('id');
     if (!Object.hasOwn(gamePaths, game) || !id || !/^[A-Za-z0-9_-]+$/.test(id)) return send(res, 400, { error: 'Неверный идентификатор турнира.' });
     try {
-      const root = `/${gamePaths[game]}/tournaments/${encodeURIComponent(id)}`;
+      // PandaScore exposes tournament details and child resources through global /tournaments routes.
+      const root = `/tournaments/${encodeURIComponent(id)}`;
       const [tournament, rosters, standings, brackets, matches] = await Promise.all([
         pandascore(root),
         pandascore(`${root}/rosters`).catch(() => []),
@@ -387,7 +388,7 @@ async function notificationMatches(game, status) {
 }
 
 async function checkTelegramNotifications() {
-  if (notificationCheckBusy || !TOKEN || !BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return;
+  if (notificationCheckBusy || !TOKEN || !BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SECRET_KEY) return;
   notificationCheckBusy = true;
   try {
     const subscriptions = await supabaseRequest('gg_live_subscriptions?select=telegram_user_id,game,team_id,team_name&enabled=eq.true');
@@ -444,7 +445,7 @@ async function checkTelegramNotifications() {
   finally { notificationCheckBusy = false; }
 }
 
-if (TOKEN && BOT_TOKEN && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+if (TOKEN && BOT_TOKEN && SUPABASE_URL && SUPABASE_SECRET_KEY) {
   setTimeout(checkTelegramNotifications, 20_000);
   setInterval(checkTelegramNotifications, 60_000);
   console.log('Best-effort Telegram notifications are enabled.');
