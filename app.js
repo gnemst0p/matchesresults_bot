@@ -8,7 +8,22 @@ function readFavoriteTeams() {
   try { return JSON.parse(localStorage.getItem('gg-live-favorite-teams') || '{}') || {}; }
   catch { return {}; }
 }
+function readDeviceFavorites() {
+  try {
+    const saved = localStorage.getItem('gg-live-device-favorite-teams');
+    if (saved !== null) return JSON.parse(saved) || {};
+    const legacy = readFavoriteTeams();
+    localStorage.setItem('gg-live-device-favorite-teams', JSON.stringify(legacy));
+    return legacy;
+  } catch { return readFavoriteTeams(); }
+}
+const deviceFavorites = readDeviceFavorites();
 const state = { game: 'all', status: 'live', busy: false, date: moscowToday(), tournamentStatus: 'running', favoritesOnly: false, favorites: readFavoriteTeams(), notifications: {}, searchMode: false, calendarStart: null };
+let authClient = null;
+let authSession = null;
+let authMode = 'login';
+let syncingFavorites = false;
+let lastFavoriteUser = null;
 const list = document.getElementById('match-list');
 const notice = document.getElementById('notice');
 const titles = { live: 'Идут прямо сейчас', upcoming: 'Предстоящие матчи', past: 'Завершённые матчи' };
@@ -49,11 +64,65 @@ updateClock(); setInterval(updateClock, 30_000);
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
 function favoriteKey(game, teamId) { return `${game}:${teamId}`; }
 function isFavorite(game, teamId) { return Boolean(state.favorites[favoriteKey(game, teamId)]); }
+function persistFavorites() {
+  try { localStorage.setItem('gg-live-favorite-teams', JSON.stringify(state.favorites)); } catch {}
+}
+async function saveFavoriteToAccount(game, teamId, name, enabled) {
+  if (!authClient || !authSession?.user || syncingFavorites) return;
+  const row = { user_id: authSession.user.id, game, team_id: String(teamId), team_name: String(name).slice(0, 120) };
+  try {
+    const query = authClient.from('gg_live_user_favorites');
+    const result = enabled
+      ? await query.upsert(row, { onConflict: 'user_id,game,team_id' })
+      : await query.delete().eq('user_id', authSession.user.id).eq('game', game).eq('team_id', String(teamId));
+    if (result.error) throw result.error;
+  } catch (error) {
+    showAccountMessage('Не удалось сохранить избранное в облаке. Проверьте таблицу и правила доступа Supabase.', true);
+    console.warn('Favorite save error:', error.message);
+  }
+}
+async function syncFavoritesWithAccount(user) {
+  if (!authClient || !user || lastFavoriteUser === user.id) return;
+  syncingFavorites = true;
+  lastFavoriteUser = user.id;
+  try {
+    const { data, error } = await authClient.from('gg_live_user_favorites').select('game,team_id,team_name').eq('user_id', user.id);
+    if (error) throw error;
+    const cloud = {};
+    for (const row of data || []) cloud[favoriteKey(row.game, row.team_id)] = { game: row.game, id: String(row.team_id), name: row.team_name };
+    const local = { ...deviceFavorites };
+    state.favorites = { ...cloud, ...local };
+    persistFavorites();
+    const missing = Object.entries(local).filter(([key]) => !cloud[key]).map(([, item]) => ({ user_id: user.id, game: item.game, team_id: String(item.id), team_name: String(item.name || '').slice(0, 120) }));
+    if (missing.length) {
+      const { error: saveError } = await authClient.from('gg_live_user_favorites').upsert(missing, { onConflict: 'user_id,game,team_id' });
+      if (saveError) throw saveError;
+    }
+    for (const key of Object.keys(deviceFavorites)) delete deviceFavorites[key];
+    try { localStorage.setItem('gg-live-device-favorite-teams', '{}'); } catch {}
+    refreshFavoriteButton();
+    document.dispatchEvent(new CustomEvent('gg-favorites-synced'));
+    if (state.favoritesOnly) loadMatches();
+  } catch (error) {
+    lastFavoriteUser = null;
+    showAccountMessage('Не удалось синхронизировать избранное. Проверьте настройки Supabase.', true);
+    console.warn('Favorite sync error:', error.message);
+  } finally { syncingFavorites = false; }
+}
 function saveFavorite(game, teamId, name) {
   const key = favoriteKey(game, teamId);
-  if (state.favorites[key]) delete state.favorites[key];
-  else state.favorites[key] = { game, id: String(teamId), name };
-  try { localStorage.setItem('gg-live-favorite-teams', JSON.stringify(state.favorites)); } catch {}
+  if (state.favorites[key]) {
+    delete state.favorites[key];
+    if (!authSession?.user) delete deviceFavorites[key];
+  }
+  else {
+    state.favorites[key] = { game, id: String(teamId), name };
+    if (!authSession?.user) deviceFavorites[key] = { game, id: String(teamId), name };
+  }
+  if (!authSession?.user) try { localStorage.setItem('gg-live-device-favorite-teams', JSON.stringify(deviceFavorites)); } catch {}
+  persistFavorites();
+  saveFavoriteToAccount(game, teamId, name, Boolean(state.favorites[key]));
+  if (state.favoritesOnly) loadMatches();
   refreshFavoriteButton();
   document.querySelectorAll('.favorite-team-toggle').forEach(toggle => {
     if (toggle.dataset.favoriteKey !== key) return;
@@ -62,6 +131,103 @@ function saveFavorite(game, teamId, name) {
     toggle.setAttribute('aria-pressed', String(active));
   });
 }
+
+function showAccountMessage(message, isError = false) {
+  const target = document.getElementById('account-message');
+  if (!target) return;
+  target.textContent = message || '';
+  target.classList.toggle('error', Boolean(isError));
+}
+function updateAccountUI() {
+  const signedIn = Boolean(authSession?.user);
+  const accountButton = document.getElementById('account-button');
+  const user = authSession?.user;
+  document.getElementById('account-label').textContent = signedIn ? 'Аккаунт' : 'Войти';
+  document.getElementById('avatar').textContent = signedIn ? (user.email?.slice(0, 1) || user.user_metadata?.name?.slice(0, 1) || 'G').toUpperCase() : (tg?.initDataUnsafe?.user?.first_name || 'G').slice(0, 1).toUpperCase();
+  accountButton?.classList.toggle('signed-in', signedIn);
+  document.getElementById('account-title').textContent = signedIn ? 'Ваш аккаунт' : (authMode === 'signup' ? 'Создать аккаунт' : 'Войти в аккаунт');
+  document.getElementById('account-description').textContent = signedIn ? (user.email || user.user_metadata?.name || 'Вы вошли. Избранное синхронизируется между устройствами.') : 'Сохраняйте избранные команды и открывайте их на любом устройстве.';
+  document.getElementById('account-email-field').hidden = signedIn;
+  document.getElementById('account-password-field').hidden = signedIn;
+  document.getElementById('account-submit').hidden = signedIn;
+  document.getElementById('account-mode').hidden = signedIn;
+  document.getElementById('account-logout').hidden = !signedIn;
+  document.getElementById('account-submit').textContent = authMode === 'signup' ? 'Создать аккаунт' : 'Войти';
+  document.getElementById('account-mode').textContent = authMode === 'signup' ? 'Уже есть аккаунт? Войти' : 'Создать аккаунт';
+  document.getElementById('account-telegram').textContent = signedIn ? 'Привязать Telegram' : 'Продолжить через Telegram';
+}
+async function initializeAuth() {
+  try {
+    const response = await fetch('/api/config', { cache: 'no-store' });
+    const config = await response.json();
+    if (!response.ok || !config.supabaseUrl || !config.supabasePublishableKey || !window.supabase?.createClient) return;
+    authClient = window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey);
+    authClient.auth.onAuthStateChange((_event, session) => {
+      authSession = session;
+      if (!session?.user) {
+        lastFavoriteUser = null;
+        state.favorites = { ...deviceFavorites };
+        persistFavorites();
+        refreshFavoriteButton();
+        if (state.favoritesOnly) loadMatches();
+      }
+      updateAccountUI();
+      if (session?.user) void syncFavoritesWithAccount(session.user);
+    });
+    const { data } = await authClient.auth.getSession();
+    authSession = data.session;
+    updateAccountUI();
+    if (authSession?.user) void syncFavoritesWithAccount(authSession.user);
+  } catch (error) {
+    console.warn('Account initialization error:', error.message);
+  }
+}
+document.getElementById('account-button').addEventListener('click', () => {
+  showAccountMessage(authClient ? '' : 'Аккаунты пока не настроены. Добавьте настройки Supabase и выполните SQL из README.');
+  document.getElementById('account-dialog').showModal();
+});
+document.getElementById('account-close').addEventListener('click', () => document.getElementById('account-dialog').close());
+document.getElementById('account-dialog').addEventListener('click', event => { if (event.target === event.currentTarget) event.currentTarget.close(); });
+document.getElementById('account-mode').addEventListener('click', () => {
+  authMode = authMode === 'login' ? 'signup' : 'login';
+  document.getElementById('account-password').autocomplete = authMode === 'signup' ? 'new-password' : 'current-password';
+  showAccountMessage(''); updateAccountUI();
+});
+document.getElementById('account-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!authClient) return showAccountMessage('Аккаунты не настроены. Добавьте ключ Supabase и выполните SQL из README.', true);
+  const button = document.getElementById('account-submit');
+  button.disabled = true; showAccountMessage('Подождите…');
+  const email = document.getElementById('account-email').value.trim();
+  const password = document.getElementById('account-password').value;
+  try {
+    const result = authMode === 'signup'
+      ? await authClient.auth.signUp({ email, password })
+      : await authClient.auth.signInWithPassword({ email, password });
+    if (result.error) return showAccountMessage(result.error.message, true);
+    if (authMode === 'signup' && !result.data.session) return showAccountMessage('Аккаунт создан. Проверьте почту и подтвердите адрес, затем войдите.');
+    showAccountMessage('Вход выполнен. Избранные команды синхронизируются.');
+  } catch (error) { showAccountMessage(error.message || 'Не удалось выполнить вход. Попробуйте ещё раз.', true); }
+  finally { button.disabled = false; }
+});
+document.getElementById('account-telegram').addEventListener('click', async () => {
+  if (!authClient) return showAccountMessage('Сначала настройте Supabase Auth и Telegram OIDC по инструкции в README.', true);
+  showAccountMessage('Открываем Telegram…');
+  const options = { redirectTo: location.origin };
+  try {
+    const result = authSession?.user
+      ? await authClient.auth.linkIdentity({ provider: 'custom:telegram', options })
+      : await authClient.auth.signInWithOAuth({ provider: 'custom:telegram', options: { ...options, scopes: 'openid profile' } });
+    if (result.error) showAccountMessage(result.error.message, true);
+  } catch (error) { showAccountMessage(error.message || 'Не удалось начать вход через Telegram.', true); }
+});
+document.getElementById('account-logout').addEventListener('click', async () => {
+  if (!authClient) return;
+  const { error } = await authClient.auth.signOut();
+  if (error) return showAccountMessage(error.message, true);
+  showAccountMessage('Вы вышли. Избранное осталось сохранено на этом устройстве.');
+});
+initializeAuth();
 function refreshFavoriteButton() {
   const button = document.getElementById('favorites-filter');
   button.textContent = state.favoritesOnly ? `★ Избранное · фильтр включён (${Object.keys(state.favorites).length})` : `☆ Избранные команды · ${Object.keys(state.favorites).length}`;

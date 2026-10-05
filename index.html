@@ -17,7 +17,7 @@
   <main class="app-shell">
     <header class="topbar">
       <a class="brand" href="#" aria-label="GG Live — главная"><span class="brand-mark">GG<span>.</span></span><span class="brand-caption">LIVE SCORE</span><span class="platform-badge">ВЕБ-ВЕРСИЯ · ПК И МОБИЛЬНЫЙ</span></a>
-      <div class="header-right"><span class="clock" id="local-clock">--:--</span><span class="avatar" id="avatar">G</span></div>
+      <div class="header-right"><span class="clock" id="local-clock">--:--</span><button class="account-button" id="account-button" type="button"><span class="avatar" id="avatar">G</span><span id="account-label">Войти</span></button></div>
     </header>
 
     <section class="hero">
@@ -79,8 +79,26 @@
       <div id="tournament-notice" class="notice hidden"></div>
     </section>
 
+    <dialog class="account-dialog" id="account-dialog" aria-labelledby="account-title">
+      <form class="account-panel" id="account-form">
+        <button class="account-close" id="account-close" type="button" aria-label="Закрыть">×</button>
+        <div class="section-kicker">GG LIVE · ПРОФИЛЬ</div>
+        <h2 id="account-title">Войти в аккаунт</h2>
+        <p class="account-description" id="account-description">Сохраняйте избранные команды и открывайте их на любом устройстве.</p>
+        <label class="account-field" id="account-email-field">Email<input id="account-email" type="email" autocomplete="email" maxlength="254" required placeholder="name@example.com"></label>
+        <label class="account-field" id="account-password-field">Пароль<input id="account-password" type="password" autocomplete="current-password" minlength="8" maxlength="72" required placeholder="Не менее 8 символов"></label>
+        <button class="account-submit" id="account-submit" type="submit">Войти</button>
+        <button class="account-mode" id="account-mode" type="button">Создать аккаунт</button>
+        <div class="account-divider"><span>или</span></div>
+        <button class="account-telegram" id="account-telegram" type="button">Продолжить через Telegram</button>
+        <button class="account-logout" id="account-logout" type="button" hidden>Выйти</button>
+        <p class="account-message" id="account-message" role="status" aria-live="polite"></p>
+      </form>
+    </dialog>
+
     <footer class="footer"><span class="footer-brand">GG<span>.</span> LIVE</span><span>ДАННЫЕ <a href="https://pandascore.co" target="_blank" rel="noreferrer">PANDASCORE</a></span><span class="auto-refresh"><i></i>АВТООБНОВЛЕНИЕ · 60 СЕК</span></footer>
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/app.js"></script>
 </body>
 </html>

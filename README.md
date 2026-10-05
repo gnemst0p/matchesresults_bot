@@ -2,7 +2,7 @@
 
 Мини‑приложение с live‑матчами, расписанием, отдельными результатами и выбором даты по Москве для Dota 2 и CS2. В разделе «Турниры» доступны сведения о турнире, составы участников, таблица, сетка и матчи, если источник их публикует. Данные загружаются через сервер, API‑ключи не попадают в браузер. CS2 использует `/csgo/` путь PandaScore.
 
-Также есть поиск команд и турниров, избранные команды (сохраняются в браузере этого устройства), страница команды с составом и последними/ближайшими матчами, календарь с неделями и выбором даты. Один и тот же HTTPS-адрес открывает адаптивный сайт в обычном браузере компьютера/ноутбука и мини-приложение в Telegram.
+Также есть поиск команд и турниров, избранные команды (до входа хранятся в браузере; после входа синхронизируются через Supabase), страница команды с составом и последними/ближайшими матчами, календарь с неделями и выбором даты. Один и тот же HTTPS-адрес открывает адаптивный сайт в обычном браузере компьютера/ноутбука и мини-приложение в Telegram.
 
 ## Запуск
 
@@ -46,6 +46,63 @@ grant all on public.gg_live_subscriptions, public.gg_live_notification_events to
 ```
 
 В Render добавьте `SUPABASE_URL` и `SUPABASE_SECRET_KEY` из настроек проекта Supabase. Secret key должен храниться только в Render как секрет; не добавляйте его в GitHub или клиентский код. Старый `service_role` ключ тоже поддерживается. После деплоя отправьте боту `/start`, откройте приложение и на странице команды включите уведомления.
+
+## Аккаунты, облачное избранное и вход через Telegram
+
+Аккаунт GG Live создаётся через email и пароль или через Telegram. Избранные команды, добавленные до входа, объединяются с избранным аккаунта; затем изменения доступны на других устройствах после входа в тот же аккаунт. Вход Telegram можно привязать к уже открытому email-аккаунту кнопкой «Привязать Telegram».
+
+### 1. Создайте таблицу избранного
+
+В Supabase откройте **SQL Editor → New query**, вставьте SQL ниже и нажмите **Run**. Правила RLS разрешают пользователю видеть и менять только свои строки.
+
+```sql
+create table if not exists public.gg_live_user_favorites (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  game text not null check (game in ('dota2', 'cs2')),
+  team_id text not null,
+  team_name text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, game, team_id)
+);
+
+alter table public.gg_live_user_favorites enable row level security;
+grant select, insert, update, delete on public.gg_live_user_favorites to authenticated;
+
+drop policy if exists "Read own favorites" on public.gg_live_user_favorites;
+create policy "Read own favorites" on public.gg_live_user_favorites
+  for select to authenticated using ((select auth.uid()) = user_id);
+drop policy if exists "Insert own favorites" on public.gg_live_user_favorites;
+create policy "Insert own favorites" on public.gg_live_user_favorites
+  for insert to authenticated with check ((select auth.uid()) = user_id);
+drop policy if exists "Update own favorites" on public.gg_live_user_favorites;
+create policy "Update own favorites" on public.gg_live_user_favorites
+  for update to authenticated using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+drop policy if exists "Delete own favorites" on public.gg_live_user_favorites;
+create policy "Delete own favorites" on public.gg_live_user_favorites
+  for delete to authenticated using ((select auth.uid()) = user_id);
+```
+
+### 2. Настройте ключ приложения
+
+В Render у сервиса откройте **Environment** и добавьте:
+
+- `SUPABASE_URL` — Project URL из **Supabase → Project Settings → API** (обычно он уже добавлен для уведомлений);
+- `SUPABASE_PUBLISHABLE_KEY` — новый **Publishable key** из настроек API. Если в панели отображается старый ключ `anon`, его можно указать вместо publishable key.
+
+Существующий `SUPABASE_SECRET_KEY` оставьте только для серверных уведомлений. Никогда не вставляйте secret/service-role key в клиентский код и не указывайте его как `SUPABASE_PUBLISHABLE_KEY`. Нажмите **Save Changes** и дождитесь повторного деплоя Render.
+
+### 3. Включите Telegram-вход в Supabase
+
+1. В Supabase откройте **Authentication → Sign In / Providers → Custom Providers → New Provider** и выберите **Auto-discovery (OIDC)**.
+2. Укажите identifier `custom:telegram`, имя `Telegram`, issuer `https://oauth.telegram.org`, scopes `openid profile`, и включите **Email optional**. Callback URL, который покажет Supabase, скопируйте.
+3. В Telegram откройте мини-приложение @BotFather, выберите используемого GG Live бота → **Login Widget** → **OpenID Connect Login**. Добавьте адрес сайта `https://matchesresults-bot.onrender.com` и скопированный callback Supabase в список разрешённых адресов. Скопируйте выданные **Client ID** и **Client Secret**.
+4. Вернитесь в настройки провайдера Supabase, вставьте эти Client ID и Client Secret и сохраните провайдера.
+5. В **Authentication → URL Configuration** укажите Site URL `https://matchesresults-bot.onrender.com` и добавьте этот же адрес в Redirect URLs.
+
+Client Secret от BotFather — это отдельный секрет авторизации, не `TELEGRAM_BOT_TOKEN`. Храните его только в настройках провайдера Supabase. Для входа через Telegram Supabase использует официальный OIDC с проверкой токена; адрес сайта и callback должны точно совпадать с добавленными в BotFather.
+
+После деплоя откройте сайт на компьютере или мини-приложение, нажмите **Войти**, зарегистрируйтесь или продолжите через Telegram. Подтвердите email, если Supabase попросит это сделать. Войдите в тот же аккаунт на телефоне, чтобы увидеть облачное избранное.
 
 На бесплатном Render уведомления работают с перебоями: сервис может уснуть после 15 минут без входящих запросов, а при перезапуске проверка матчей остановится. Бесплатные проекты Supabase также могут приостановиться после недели низкой активности. Для этого режима сервер проверяет события примерно раз в минуту, когда он активен.
 

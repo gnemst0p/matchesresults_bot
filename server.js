@@ -11,6 +11,7 @@ const APP_URL = process.env.TELEGRAM_APP_URL;
 const LIQUIPEDIA_CONTACT = process.env.LIQUIPEDIA_CONTACT;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const ROOT = __dirname;
 const API = 'https://api.pandascore.co';
 const gamePaths = { dota2: 'dota2', cs2: 'csgo' };
@@ -184,6 +185,7 @@ function searchLiquipedia(game, query) {
 
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/api/config') return send(res, 200, { supabaseUrl: SUPABASE_URL || '', supabasePublishableKey: SUPABASE_PUBLISHABLE_KEY });
   if (url.pathname === '/api/health') return send(res, 200, { ok: true, configured: Boolean(TOKEN), notificationsConfigured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY && BOT_TOKEN) });
   if (url.pathname === '/api/matches') {
     if (!TOKEN) return send(res, 503, { error: 'Добавьте PANDASCORE_TOKEN в файл .env, чтобы загрузить актуальные матчи.' });
