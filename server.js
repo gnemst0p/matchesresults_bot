@@ -164,6 +164,28 @@ async function handle(req, res) {
       return send(res, 200, { tournaments: lists.flatMap(({ game: name, tournaments }) => tournaments.map(tournament => ({ ...tournament, game: name }))), updatedAt: new Date().toISOString() });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить турниры.' }); }
   }
+  if (url.pathname === '/api/search') {
+    if (!TOKEN) return send(res, 503, { error: 'Для поиска нужен PANDASCORE_TOKEN.' });
+    const game = url.searchParams.get('game') || 'all';
+    const query = (url.searchParams.get('q') || '').trim().slice(0, 80);
+    if (!['all', ...Object.keys(gamePaths)].includes(game) || query.length < 2) return send(res, 400, { error: 'Введите не менее двух символов для поиска.' });
+    try {
+      const games = game === 'all' ? Object.keys(gamePaths) : [game];
+      const results = await Promise.all(games.map(async name => {
+        const params = { 'search[name]': query, per_page: '10', sort: 'name' };
+        const [teams, tournaments] = await Promise.all([
+          pandascore(`/${gamePaths[name]}/teams`, params),
+          pandascore(`/${gamePaths[name]}/tournaments`, { ...params, sort: '-begin_at' })
+        ]);
+        return { game: name, teams, tournaments };
+      }));
+      return send(res, 200, {
+        teams: results.flatMap(result => result.teams.map(team => ({ ...team, game: result.game }))),
+        tournaments: results.flatMap(result => result.tournaments.map(tournament => ({ ...tournament, game: result.game }))),
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) { return send(res, 502, { error: error.message || 'Не удалось выполнить поиск.' }); }
+  }
   if (url.pathname === '/api/tournament') {
     if (!TOKEN) return send(res, 503, { error: 'Для турниров добавьте PANDASCORE_TOKEN.' });
     const game = url.searchParams.get('game');
@@ -189,7 +211,12 @@ async function handle(req, res) {
     if (!Object.hasOwn(gamePaths, game) || !teamId || !/^[A-Za-z0-9_-]+$/.test(teamId) || (tournamentId && !/^[A-Za-z0-9_-]+$/.test(tournamentId))) return send(res, 400, { error: 'Неверные параметры команды.' });
     try {
       const teamPath = `/teams/${encodeURIComponent(teamId)}`;
-      const team = await pandascore(teamPath);
+      const [team, recentMatches, upcomingMatches, liveMatches] = await Promise.all([
+        pandascore(teamPath),
+        pandascore(`/teams/${encodeURIComponent(teamId)}/matches`, { 'filter[status]': 'finished', per_page: '10', sort: '-begin_at' }).catch(() => []),
+        pandascore(`/teams/${encodeURIComponent(teamId)}/matches`, { 'filter[status]': 'not_started', per_page: '10', sort: 'begin_at' }).catch(() => []),
+        pandascore(`/teams/${encodeURIComponent(teamId)}/matches`, { 'filter[status]': 'running', per_page: '10', sort: 'begin_at' }).catch(() => [])
+      ]);
       let tournamentRoster = null;
       if (tournamentId) {
         const rosters = await pandascore(`/tournaments/${encodeURIComponent(tournamentId)}/rosters`).catch(() => []);
@@ -202,6 +229,7 @@ async function handle(req, res) {
         team,
         players: Array.isArray(rosterPlayers) && rosterPlayers.length ? rosterPlayers : Array.isArray(teamPlayers) ? teamPlayers : [],
         source: Array.isArray(rosterPlayers) && rosterPlayers.length ? 'tournament' : 'team',
+        matches: [...(Array.isArray(liveMatches) ? liveMatches : []), ...(Array.isArray(upcomingMatches) ? upcomingMatches : []), ...(Array.isArray(recentMatches) ? recentMatches : [])],
         updatedAt: new Date().toISOString()
       });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить состав команды.' }); }

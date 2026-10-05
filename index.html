@@ -35,6 +35,11 @@
       <button class="refresh" id="refresh" aria-label="Обновить матчи"><span>↻</span><span class="refresh-label">Обновить</span></button>
     </section>
 
+    <section class="discovery-tools" aria-label="Поиск и избранное">
+      <button class="favorites-filter" id="favorites-filter" type="button" aria-pressed="false">☆ Избранные команды</button>
+      <form class="global-search" id="search-form"><input id="search-query" type="search" maxlength="80" placeholder="Команда или турнир" aria-label="Поиск команд и турниров"><button type="submit">Найти</button></form>
+    </section>
+
     <nav class="status-tabs" aria-label="Раздел матчей">
       <button class="status-tab active" data-status="live"><span class="tab-dot"></span>Сейчас <span class="tab-count" id="live-count">0</span></button>
       <button class="status-tab" data-status="upcoming">Расписание</button>
@@ -47,6 +52,7 @@
       <button class="date-shortcut active" data-offset="0">Сегодня</button>
       <button class="date-shortcut" data-offset="1">Завтра</button>
       <label class="date-custom"><span>Другая дата</span><input type="date" id="match-date"></label>
+      <div class="week-calendar"><div class="week-calendar-heading"><button type="button" id="calendar-prev" aria-label="Предыдущая неделя">‹</button><span id="calendar-title">Эта неделя</span><button type="button" id="calendar-next" aria-label="Следующая неделя">›</button></div><div class="calendar-days" id="calendar-days"></div></div>
     </div>
 
     <div class="tournament-filter" id="tournament-filter" hidden aria-label="Фильтр турниров">
@@ -59,6 +65,12 @@
       <div class="section-heading"><div><div class="section-kicker" id="date-label">СЕГОДНЯ</div><h2 id="section-title">Идут прямо сейчас</h2></div><span class="updated" id="updated-at">—</span></div>
       <div id="match-list" class="match-list" aria-live="polite"></div>
       <div id="notice" class="notice hidden"></div>
+    </section>
+
+    <section class="match-section search-results-section" id="search-results-section" hidden>
+      <div class="section-heading"><div><div class="section-kicker">КОМАНДЫ · ТУРНИРЫ</div><h2>Результаты поиска</h2></div></div>
+      <div id="search-results" class="match-list"></div>
+      <div id="search-notice" class="notice hidden"></div>
     </section>
 
     <section class="match-section tournament-section" id="tournament-section" hidden>
