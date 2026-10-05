@@ -188,11 +188,11 @@ async function handle(req, res) {
     const tournamentId = url.searchParams.get('tournament');
     if (!Object.hasOwn(gamePaths, game) || !teamId || !/^[A-Za-z0-9_-]+$/.test(teamId) || (tournamentId && !/^[A-Za-z0-9_-]+$/.test(tournamentId))) return send(res, 400, { error: 'Неверные параметры команды.' });
     try {
-      const teamPath = `/${gamePaths[game]}/teams/${encodeURIComponent(teamId)}`;
+      const teamPath = `/teams/${encodeURIComponent(teamId)}`;
       const team = await pandascore(teamPath);
       let tournamentRoster = null;
       if (tournamentId) {
-        const rosters = await pandascore(`/${gamePaths[game]}/tournaments/${encodeURIComponent(tournamentId)}/rosters`).catch(() => []);
+        const rosters = await pandascore(`/tournaments/${encodeURIComponent(tournamentId)}/rosters`).catch(() => []);
         const entries = Array.isArray(rosters) ? rosters : Object.values(rosters || {});
         tournamentRoster = entries.find(entry => String(entry.team?.id ?? entry.team_id ?? '') === String(teamId)) || null;
       }
