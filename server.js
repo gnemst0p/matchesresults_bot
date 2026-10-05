@@ -121,8 +121,8 @@ function telegramUserFromInitData(initData) {
   if (!providedHash || !/^[a-f0-9]{64}$/i.test(providedHash) || !Number.isFinite(authDate) || Math.abs(Date.now() / 1000 - authDate) > 86_400) {
     throw new Error('Сессия Telegram устарела. Закройте мини-приложение и откройте его снова.');
   }
+  // For bot-token validation, hash is the only field removed; the newer Telegram `signature` field remains in this HMAC payload.
   params.delete('hash');
-  params.delete('signature');
   const checkString = [...params.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join('\n');
   const secret = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
   const expected = crypto.createHmac('sha256', secret).update(checkString).digest();
