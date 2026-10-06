@@ -26,8 +26,8 @@ let syncingFavorites = false;
 let lastFavoriteUser = null;
 const list = document.getElementById('match-list');
 const notice = document.getElementById('notice');
-const titles = { live: 'Идут прямо сейчас', upcoming: 'Предстоящие матчи', past: 'Завершённые матчи' };
-const labels = { live: 'LIVE · СЕЙЧАС', upcoming: 'РАСПИСАНИЕ', past: 'РЕЗУЛЬТАТЫ' };
+const titles = { live: 'Идут прямо сейчас', matches: 'Матчи' };
+const labels = { live: 'LIVE · СЕЙЧАС', matches: 'МАТЧИ' };
 const matchSection = document.getElementById('match-section');
 const tournamentSection = document.getElementById('tournament-section');
 const tournamentList = document.getElementById('tournament-list');
@@ -138,15 +138,26 @@ function showAccountMessage(message, isError = false) {
   target.textContent = message || '';
   target.classList.toggle('error', Boolean(isError));
 }
+function hasTelegramIdentity(user) {
+  const providers = [
+    ...(Array.isArray(user?.identities) ? user.identities.map(identity => identity.provider) : []),
+    ...(Array.isArray(user?.app_metadata?.providers) ? user.app_metadata.providers : []),
+    user?.app_metadata?.provider
+  ];
+  return providers.some(provider => ['custom:telegram', 'telegram'].includes(String(provider || '').toLowerCase()));
+}
 function updateAccountUI() {
   const signedIn = Boolean(authSession?.user);
   const accountButton = document.getElementById('account-button');
   const user = authSession?.user;
+  const telegramLinked = signedIn && hasTelegramIdentity(user);
   document.getElementById('account-label').textContent = signedIn ? 'Аккаунт' : 'Войти';
   document.getElementById('avatar').textContent = signedIn ? (user.email?.slice(0, 1) || user.user_metadata?.name?.slice(0, 1) || 'G').toUpperCase() : (tg?.initDataUnsafe?.user?.first_name || 'G').slice(0, 1).toUpperCase();
   accountButton?.classList.toggle('signed-in', signedIn);
   document.getElementById('account-title').textContent = signedIn ? 'Ваш аккаунт' : (authMode === 'signup' ? 'Создать аккаунт' : 'Войти в аккаунт');
-  document.getElementById('account-description').textContent = signedIn ? (user.email || user.user_metadata?.name || 'Вы вошли. Избранное синхронизируется между устройствами.') : 'Сохраняйте избранные команды и открывайте их на любом устройстве.';
+  document.getElementById('account-description').textContent = signedIn
+    ? `${user.email || user.user_metadata?.name || 'Вы вошли. Избранное синхронизируется между устройствами.'}${telegramLinked ? ' · Telegram уже подключён' : ''}`
+    : 'Сохраняйте избранные команды и открывайте их на любом устройстве.';
   document.getElementById('account-email-field').hidden = signedIn;
   document.getElementById('account-password-field').hidden = signedIn;
   document.getElementById('account-submit').hidden = signedIn;
@@ -154,6 +165,8 @@ function updateAccountUI() {
   document.getElementById('account-logout').hidden = !signedIn;
   document.getElementById('account-submit').textContent = authMode === 'signup' ? 'Создать аккаунт' : 'Войти';
   document.getElementById('account-mode').textContent = authMode === 'signup' ? 'Уже есть аккаунт? Войти' : 'Создать аккаунт';
+  document.getElementById('account-telegram').hidden = telegramLinked;
+  document.querySelector('.account-divider').hidden = telegramLinked;
   document.getElementById('account-telegram').textContent = signedIn ? 'Привязать Telegram' : 'Продолжить через Telegram';
 }
 async function initializeAuth() {
@@ -176,6 +189,10 @@ async function initializeAuth() {
     });
     const { data } = await authClient.auth.getSession();
     authSession = data.session;
+    if (authSession) {
+      const { data: userData } = await authClient.auth.getUser();
+      if (userData?.user) authSession = { ...authSession, user: userData.user };
+    }
     updateAccountUI();
     if (authSession?.user) void syncFavoritesWithAccount(authSession.user);
   } catch (error) {
@@ -212,14 +229,25 @@ document.getElementById('account-form').addEventListener('submit', async event =
 });
 document.getElementById('account-telegram').addEventListener('click', async () => {
   if (!authClient) return showAccountMessage('Сначала настройте Supabase Auth и Telegram OIDC по инструкции в README.', true);
+  if (authSession?.user && hasTelegramIdentity(authSession.user)) return showAccountMessage('Telegram уже подключён к этому аккаунту.');
   showAccountMessage('Открываем Telegram…');
   const options = { redirectTo: location.origin };
   try {
     const result = authSession?.user
       ? await authClient.auth.linkIdentity({ provider: 'custom:telegram', options })
       : await authClient.auth.signInWithOAuth({ provider: 'custom:telegram', options: { ...options, scopes: 'openid profile' } });
-    if (result.error) showAccountMessage(result.error.message, true);
-  } catch (error) { showAccountMessage(error.message || 'Не удалось начать вход через Telegram.', true); }
+    if (result.error) {
+      const message = result.error.message || '';
+      showAccountMessage(/manual linking is disabled/i.test(message)
+        ? 'В Supabase выключена ручная привязка. Включите Authentication → Sign In / Providers → Allow manual linking, затем попробуйте снова.'
+        : message, true);
+    }
+  } catch (error) {
+    const message = error.message || '';
+    showAccountMessage(/manual linking is disabled/i.test(message)
+      ? 'В Supabase выключена ручная привязка. Включите Authentication → Sign In / Providers → Allow manual linking, затем попробуйте снова.'
+      : message || 'Не удалось начать вход через Telegram.', true);
+  }
 });
 document.getElementById('account-logout').addEventListener('click', async () => {
   if (!authClient) return;
@@ -309,12 +337,13 @@ function cardMarkup(match) {
   const tournament = match.tournament?.name || match.league?.name || match.serie?.full_name || 'Матч';
   const round = match.number_of_games ? `BO${match.number_of_games}` : (match.tournament?.name || 'Матч');
   const date = dateOf(match);
-  const live = state.status === 'live';
-  const klass = live ? 'live-card' : state.status === 'past' ? 'finished-card' : 'scheduled-card';
+  const live = match.status === 'running' || state.status === 'live';
+  const finished = match.status === 'finished';
+  const klass = live ? 'live-card' : finished ? 'finished-card' : 'scheduled-card';
   const game = match.game === 'cs2' ? 'CS2' : 'DOTA 2';
-  const status = live ? '● LIVE' : state.status === 'past' ? 'ЗАВЕРШЁН' : 'НАЧАЛО';
-  const scoreNote = !scoresReady && (live || state.status === 'past') ? `<div class="score-note">${live ? 'LIVE-СЧЁТ НЕ ПЕРЕДАН ИСТОЧНИКОМ' : 'ИТОГОВЫЙ СЧЁТ НЕ ОПУБЛИКОВАН'}</div>` : '';
-  const center = live || state.status === 'past' ? `${scores}${scoreNote}` : `<span class="score pending">${date ? escapeHtml(new Intl.DateTimeFormat('ru-RU', { timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit' }).format(new Date(date))) : 'TBA'}</span>`;
+  const status = live ? '● LIVE' : finished ? 'ЗАВЕРШЁН' : 'НАЧАЛО';
+  const scoreNote = !scoresReady && (live || finished) ? `<div class="score-note">${live ? 'LIVE-СЧЁТ НЕ ПЕРЕДАН ИСТОЧНИКОМ' : 'ИТОГОВЫЙ СЧЁТ НЕ ОПУБЛИКОВАН'}</div>` : '';
+  const center = live || finished ? `${scores}${scoreNote}` : `<span class="score pending">${date ? escapeHtml(new Intl.DateTimeFormat('ru-RU', { timeZone:'Europe/Moscow', hour:'2-digit', minute:'2-digit' }).format(new Date(date))) : 'TBA'}</span>`;
   const detailsId = `match-details-${escapeHtml(match.id || match.slug || `${match.game}-${date || 'match'}`)}`;
   const firstTeam = teamMarkup(first, 'left', match);
   const secondTeam = teamMarkup(second, 'right', match);
@@ -327,7 +356,7 @@ function cardMarkup(match) {
 }
 function showLoading() { list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; }
 function showEmpty() {
-  const descriptions = { live: 'Как только начнётся матч, он появится здесь.', upcoming: `На ${dateTitle(state.date).toLowerCase()} запланированных матчей не найдено.`, past: `За ${dateTitle(state.date).toLowerCase()} завершённых матчей не найдено.` };
+  const descriptions = { live: 'Как только начнётся матч, он появится здесь.', matches: `На ${dateTitle(state.date).toLowerCase()} матчей не найдено.` };
   list.innerHTML = `<div class="empty"><div class="empty-icon">◉</div>${descriptions[state.status]}</div>`;
 }
 function renderWeekCalendar() {
@@ -346,8 +375,6 @@ document.getElementById('calendar-days').addEventListener('click', event => {
   const button = event.target.closest('.calendar-day');
   if (!button) return;
   state.date = button.dataset.date;
-  document.getElementById('match-date').value = state.date;
-  document.querySelectorAll('.date-shortcut').forEach(shortcut => shortcut.classList.toggle('active', shiftDate(moscowToday(), Number(shortcut.dataset.offset)) === state.date));
   renderWeekCalendar(); list.innerHTML = ''; loadMatches();
 });
 async function loadMatches() {
@@ -592,19 +619,49 @@ function tournamentDate(value) {
   if (!value) return 'Даты не указаны';
   return new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value));
 }
+function isTournamentStageName(value) {
+  const name = String(value || '').trim().replace(/\s+\d{4}$/, '');
+  return /^(?:playoffs?|group(?:\s+(?:stage|[a-z0-9]+))?|regular season|qualifiers?|closed qualifier|open qualifier|lower bracket|upper bracket|grand final|main event)$/i.test(name);
+}
+function tournamentDisplayName(tournament) {
+  const candidates = [tournament.display_name, tournament.serie?.full_name, tournament.serie?.name, tournament.league?.name, tournament.name];
+  return candidates.find(value => value && !isTournamentStageName(value)) || '';
+}
+function formatPrize(value) {
+  if (value == null || value === '') return '';
+  const raw = String(value).trim();
+  const parts = raw.match(/^([\d][\d.,\s]*)(.*)$/);
+  if (!parts) return raw;
+  const digits = parts[1].replace(/\D/g, '');
+  if (!digits) return raw;
+  const amount = Number(digits);
+  if (!Number.isFinite(amount)) return raw;
+  return `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(amount)}${parts[2] ? ` ${parts[2].trim()}` : ''}`;
+}
+function stageLabel(value) {
+  const name = String(value || '').trim();
+  if (/^playoffs?$/i.test(name)) return 'Плей-офф';
+  if (/^group stage$/i.test(name)) return 'Групповой этап';
+  if (/^group\s+([a-z0-9]+)$/i.test(name)) return `Группа ${name.match(/^group\s+([a-z0-9]+)$/i)[1].toUpperCase()}`;
+  if (/^regular season$/i.test(name)) return 'Регулярный сезон';
+  if (/^closed qualifier$/i.test(name)) return 'Закрытая квалификация';
+  if (/^open qualifier$/i.test(name)) return 'Открытая квалификация';
+  return name || 'Этап турнира';
+}
 function tournamentMarkup(t) {
-  const name = t.name || t.slug || 'Турнир';
-  const series = t.serie?.full_name || t.serie?.name || t.league?.name;
+  const name = tournamentDisplayName(t) || 'Турнир';
+  const series = t.league?.name || t.organizer;
   const dates = [t.begin_at || t.start_at, t.end_at].filter(Boolean).map(tournamentDate).join(' — ');
-  const prize = t.prizepool || t.prize_pool;
-  const id = String(t.id || t.slug || '');
-  return `<article class="tournament-card"><div class="tournament-topline"><span>${escapeHtml((t.game || '').toUpperCase())}</span>${t.tier ? `<span class="tournament-tier">TIER ${escapeHtml(t.tier)}</span>` : '<span class="tournament-tier">TIER —</span>'}</div><h3>${escapeHtml(name)}</h3><p class="tournament-series">${escapeHtml(series || t.organizer || 'Киберспортивный турнир')}</p><div class="tournament-meta"><span>${escapeHtml(dates || 'Расписание уточняется')}</span>${prize ? `<span>Призовой фонд · ${escapeHtml(prize)}</span>` : ''}</div><button class="details-toggle tournament-details-toggle" data-id="${escapeHtml(id)}" data-game="${escapeHtml(t.game || '')}" aria-expanded="false">Составы, сетка и результаты <span>＋</span></button><div class="tournament-detail" hidden></div></article>`;
+  const prize = formatPrize(t.prizepool || t.prize_pool);
+  const stageIds = (t.stage_ids || [t.id || t.slug]).filter(Boolean).map(String);
+  const id = stageIds[0] || '';
+  return `<article class="tournament-card"><div class="tournament-topline"><span>${escapeHtml((t.game || '').toUpperCase())}</span>${t.tier ? `<span class="tournament-tier">TIER ${escapeHtml(t.tier)}</span>` : '<span class="tournament-tier">TIER —</span>'}</div><h3>${escapeHtml(name)}</h3><p class="tournament-series">${escapeHtml(series || 'Киберспортивный турнир')}</p><div class="tournament-meta"><span>${escapeHtml(dates || 'Расписание уточняется')}</span>${prize ? `<span>Призовой фонд · ${escapeHtml(prize)}</span>` : ''}</div><button class="details-toggle tournament-details-toggle" data-id="${escapeHtml(id)}" data-stage-ids="${escapeHtml(stageIds.join(','))}" data-game="${escapeHtml(t.game || '')}" aria-expanded="false">Команды, этапы и сетка <span>＋</span></button><div class="tournament-detail" hidden></div></article>`;
 }
 function tournamentInfoCount(t) {
   return [
     Boolean(t.tier),
     Boolean(t.begin_at || t.start_at || t.end_at),
-    Boolean(t.serie?.name || t.serie?.full_name || t.league?.name),
+    Boolean(t.display_name || t.serie?.name || t.serie?.full_name || t.league?.name),
     Boolean(t.organizer),
     Boolean(t.prizepool || t.prize_pool),
     Boolean(t.has_bracket),
@@ -622,13 +679,44 @@ function compareTournamentTier(a, b) {
 }
 function valuesOf(value) { return Array.isArray(value) ? value : value && typeof value === 'object' ? Object.values(value) : []; }
 function teamName(item) { return item?.team?.name || item?.opponent?.name || item?.participant?.name || item?.name || 'Участник'; }
-function rosterMarkup(rosters, expected) {
-  const rows = valuesOf(rosters).length ? valuesOf(rosters) : valuesOf(expected);
-  if (!rows.length) return '<p class="detail-muted">Составы пока не опубликованы.</p>';
-  return `<div class="tournament-rosters">${rows.map(row => {
-    const players = valuesOf(row.players || row.roster || row.expected_roster).map(player => player.name || player.nickname || player.slug).filter(Boolean);
-    return `<div class="roster-team"><strong>${escapeHtml(teamName(row))}</strong><span>${escapeHtml(players.join(' · ') || 'Список игроков пока недоступен')}</span></div>`;
-  }).join('')}</div>`;
+function tournamentParticipants(data) {
+  const teams = new Map();
+  const add = value => {
+    if (!value) return;
+    const item = typeof value === 'string' ? { name: value } : value;
+    const team = item.team || item.opponent?.opponent || item.participant || item.opponent || item;
+    const name = team?.name || team?.team?.name || item.name;
+    if (!name) return;
+    const id = team?.id ?? item.team_id ?? item.opponent_id ?? name.toLowerCase();
+    teams.set(String(id), String(name));
+  };
+  valuesOf(data.rosters).forEach(add);
+  valuesOf(data.standings).forEach(add);
+  valuesOf(data.tournament?.teams).forEach(add);
+  valuesOf(data.tournament?.expected_roster).forEach(add);
+  valuesOf(data.stages).forEach(stage => {
+    valuesOf(stage.teams).forEach(add);
+    valuesOf(stage.expected_roster).forEach(add);
+  });
+  valuesOf(data.matches).forEach(match => valuesOf(match.opponents).forEach(add));
+  const scanBrackets = value => {
+    if (Array.isArray(value)) { value.forEach(scanBrackets); return; }
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value.opponents)) value.opponents.forEach(add);
+    for (const [key, child] of Object.entries(value)) if (key !== 'opponents' && child && typeof child === 'object') scanBrackets(child);
+  };
+  scanBrackets(data.brackets);
+  return [...teams.values()].sort((a, b) => a.localeCompare(b));
+}
+function participantsMarkup(data) {
+  const teams = tournamentParticipants(data);
+  if (!teams.length) return '<p class="detail-muted">Список команд пока не опубликован.</p>';
+  return `<ul class="tournament-participants">${teams.map(name => `<li>${escapeHtml(name)}</li>`).join('')}</ul>`;
+}
+function tournamentStagesMarkup(stages) {
+  const rows = valuesOf(stages);
+  if (!rows.length) return '<p class="detail-muted">Этапы турнира пока не опубликованы.</p>';
+  return `<div class="tournament-stages">${rows.map(stage => `<div class="tournament-stage"><strong>${escapeHtml(stageLabel(stage.name))}</strong>${stage.begin_at || stage.end_at ? `<span>${escapeHtml([stage.begin_at, stage.end_at].filter(Boolean).map(tournamentDate).join(' — '))}</span>` : ''}</div>`).join('')}</div>`;
 }
 function standingsMarkup(standings) {
   const rows = valuesOf(standings);
@@ -696,8 +784,10 @@ function bracketMarkup(brackets, matches) {
 }
 function tournamentDetailMarkup(data) {
   const t = data.tournament || {};
-  const items = [['Организатор', t.organizer], ['Формат', t.tournament_type || t.type], ['Призовой фонд', t.prizepool || t.prize_pool], ['Участники', t.expected_roster?.length ? `${t.expected_roster.length} команд` : null], ['Сетка', t.has_bracket ? 'Опубликована' : null]].filter(([, value]) => value);
-  return `<div class="tournament-info">${items.map(([label, value]) => `<div class="detail-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div><h4>Составы команд</h4>${rosterMarkup(data.rosters, t.expected_roster)}<h4>Турнирная таблица</h4>${standingsMarkup(data.standings)}<h4>Сетка и матчи</h4>${bracketMarkup(data.brackets, data.matches)}<div class="liquipedia-results"><h4>Справка Liquipedia</h4><div class="liquipedia-items"><span class="detail-muted">Ищем страницу турнира…</span></div><small>Источник: <a href="https://liquipedia.net/api-terms-of-use" target="_blank" rel="noopener noreferrer">Liquipedia</a>, лицензия CC BY-SA 3.0.</small></div><p class="data-credit">Матчи и турнирные данные: PandaScore.</p>`;
+  const prize = formatPrize(t.prizepool || t.prize_pool);
+  const participants = tournamentParticipants(data);
+  const items = [['Организатор', t.organizer], ['Формат', t.tournament_type || t.type], ['Призовой фонд', prize], ['Участники', participants.length ? `${participants.length} команд` : null], ['Сетка', t.has_bracket ? 'Опубликована' : null]].filter(([, value]) => value);
+  return `<div class="tournament-info">${items.map(([label, value]) => `<div class="detail-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div><h4>Команды турнира</h4>${participantsMarkup(data)}<h4>Этапы турнира</h4>${tournamentStagesMarkup(data.stages)}<h4>Турнирная таблица</h4>${standingsMarkup(data.standings)}<h4>Сетка и матчи</h4>${bracketMarkup(data.brackets, data.matches)}<div class="liquipedia-results"><h4>Справка Liquipedia</h4><div class="liquipedia-items"><span class="detail-muted">Ищем страницу турнира…</span></div><small>Источник: <a href="https://liquipedia.net/api-terms-of-use" target="_blank" rel="noopener noreferrer">Liquipedia</a>, лицензия CC BY-SA 3.0.</small></div><p class="data-credit">Матчи и турнирные данные: PandaScore.</p>`;
 }
 async function loadTournaments() {
   matchSection.hidden = true; tournamentSection.hidden = false; searchSection.hidden = true;
@@ -710,7 +800,7 @@ async function loadTournaments() {
     const response = await fetch(`/api/tournaments?${params}`);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить турниры.');
-    const tournaments = (payload.tournaments || []).filter(t => tournamentInfoCount(t) >= 2).sort(compareTournamentTier);
+    const tournaments = (payload.tournaments || []).filter(t => tournamentDisplayName(t) && tournamentInfoCount(t) >= 2).sort(compareTournamentTier);
     tournamentList.innerHTML = tournaments.length ? tournaments.map(tournamentMarkup).join('') : '<div class="empty">Пока нет турниров с достаточной информацией для показа.</div>';
     document.getElementById('tournaments-updated').textContent = 'обновлено ' + new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' }).format(new Date(payload.updatedAt));
   } catch (error) {
@@ -719,26 +809,8 @@ async function loadTournaments() {
   }
 }
 
-document.querySelectorAll('.date-shortcut').forEach(button => button.addEventListener('click', () => {
-  state.date = shiftDate(moscowToday(), Number(button.dataset.offset));
-  state.calendarStart = mondayOf(state.date);
-  document.getElementById('match-date').value = state.date;
-  document.querySelectorAll('.date-shortcut').forEach(item => item.classList.toggle('active', item === button));
-  renderWeekCalendar();
-  list.innerHTML = ''; loadMatches();
-}));
-const dateInput = document.getElementById('match-date');
-dateInput.value = state.date;
 state.calendarStart = mondayOf(state.date);
 renderWeekCalendar();
-dateInput.addEventListener('change', () => {
-  if (!dateInput.value) return;
-  state.date = dateInput.value;
-  state.calendarStart = mondayOf(state.date);
-  document.querySelectorAll('.date-shortcut').forEach(button => button.classList.toggle('active', shiftDate(moscowToday(), Number(button.dataset.offset)) === state.date));
-  renderWeekCalendar();
-  list.innerHTML = ''; loadMatches();
-});
 document.querySelectorAll('.tournament-tab').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.tournament-tab').forEach(tab => tab.classList.toggle('active', tab === button));
   state.tournamentStatus = button.dataset.tournamentStatus; tournamentList.innerHTML = ''; loadTournaments();
@@ -753,12 +825,14 @@ async function toggleTournamentDetails(event) {
       panel.innerHTML = '<div class="detail-muted">Загружаем подробности…</div>';
       try {
         const params = new URLSearchParams({ game: button.dataset.game, id: button.dataset.id });
+        if (button.dataset.stageIds) params.set('stages', button.dataset.stageIds);
         const response = await fetch(`/api/tournament?${params}`); const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить подробности.');
         panel.innerHTML = tournamentDetailMarkup(payload); panel.dataset.loaded = 'true';
         const wikiItems = panel.querySelector('.liquipedia-items');
         if (payload.liquipediaConfigured) {
-          const wikiParams = new URLSearchParams({ game: button.dataset.game, q: payload.tournament?.name || button.closest('.tournament-card').querySelector('h3').textContent });
+          const eventName = tournamentDisplayName(payload.tournament || {}) || button.closest('.tournament-card').querySelector('h3').textContent;
+          const wikiParams = new URLSearchParams({ game: button.dataset.game, q: eventName });
           try {
             const wikiResponse = await fetch(`/api/liquipedia?${wikiParams}`); const wikiPayload = await wikiResponse.json();
             if (!wikiResponse.ok) throw new Error(wikiPayload.error || 'Liquipedia временно недоступна.');
@@ -766,11 +840,11 @@ async function toggleTournamentDetails(event) {
           } catch (error) { wikiItems.innerHTML = `<span class="detail-muted">${escapeHtml(error.message)}</span>`; }
         } else {
           const wiki = button.dataset.game === 'dota2' ? 'dota2' : 'counterstrike';
-          const searchUrl = `https://liquipedia.net/${wiki}/index.php?search=${encodeURIComponent(payload.tournament?.name || '')}`;
+          const searchUrl = `https://liquipedia.net/${wiki}/index.php?search=${encodeURIComponent(tournamentDisplayName(payload.tournament || {}) || button.closest('.tournament-card').querySelector('h3').textContent)}`;
           wikiItems.innerHTML = `<span class="detail-muted">Добавьте LIQUIPEDIA_CONTACT в переменные Render, чтобы включить поиск в приложении.</span><a class="liquipedia-result" href="${escapeHtml(searchUrl)}" target="_blank" rel="noopener noreferrer"><strong>Открыть поиск на Liquipedia ↗</strong></a>`;
         }
       } catch (error) { panel.innerHTML = `<p class="detail-muted">${escapeHtml(error.message)}</p>`; }
     }
-  } else { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); button.innerHTML = 'Составы, сетка и результаты <span>＋</span>'; }
+  } else { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); button.innerHTML = 'Команды, этапы и сетка <span>＋</span>'; }
 }
 tournamentList.addEventListener('click', toggleTournamentDetails);

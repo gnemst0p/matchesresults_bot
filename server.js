@@ -12,6 +12,43 @@ function supabaseProjectUrl(value) {
     return url.origin;
   } catch { return ''; }
 }
+function isTournamentStageName(value) {
+  const name = String(value || '').trim().replace(/\s+\d{4}$/, '');
+  return /^(?:playoffs?|group(?:\s+(?:stage|[a-z0-9]+))?|regular season|qualifiers?|closed qualifier|open qualifier|lower bracket|upper bracket|grand final|main event)$/i.test(name);
+}
+function tournamentDisplayName(tournament) {
+  const serie = tournament.serie?.full_name || tournament.serie?.name;
+  const league = tournament.league?.name;
+  return serie || (league && !isTournamentStageName(league) ? league : '') || (!isTournamentStageName(tournament.name) ? tournament.name : '') || '';
+}
+function groupTournaments(tournaments) {
+  const groups = new Map();
+  for (const tournament of tournaments) {
+    const game = tournament.game || '';
+    const serieKey = tournament.serie?.id != null ? `serie:${tournament.serie.id}`
+      : tournament.serie?.full_name || tournament.serie?.name ? `serie-name:${tournament.serie?.full_name || tournament.serie?.name}`
+        : `tournament:${tournament.id || tournament.slug || tournament.name}`;
+    const key = `${game}:${serieKey}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { ...tournament, display_name: tournamentDisplayName(tournament), stage_ids: [], stages: [] };
+      groups.set(key, group);
+    }
+    const id = String(tournament.id || tournament.slug || '');
+    if (id && !group.stage_ids.includes(id)) group.stage_ids.push(id);
+    if (!group.stages.some(stage => String(stage.id || stage.slug || '') === id)) {
+      group.stages.push({ id, name: tournament.name, begin_at: tournament.begin_at || tournament.start_at, end_at: tournament.end_at, status: tournament.status });
+    }
+    const begins = [group.begin_at || group.start_at, tournament.begin_at || tournament.start_at].filter(Boolean).map(Date.parse).filter(Number.isFinite);
+    if (begins.length) group.begin_at = new Date(Math.min(...begins)).toISOString();
+    const ends = [group.end_at, tournament.end_at].filter(Boolean).map(Date.parse).filter(Number.isFinite);
+    if (ends.length) group.end_at = new Date(Math.max(...ends)).toISOString();
+    if (!group.display_name) group.display_name = tournamentDisplayName(tournament);
+    if (!group.tier || ({ s: 0, a: 1, b: 2, c: 3, d: 4 }[String(tournament.tier || '').toLowerCase()] ?? 5) < ({ s: 0, a: 1, b: 2, c: 3, d: 4 }[String(group.tier || '').toLowerCase()] ?? 5)) group.tier = tournament.tier;
+    if (!group.prizepool && !group.prize_pool) { group.prizepool = tournament.prizepool; group.prize_pool = tournament.prize_pool; }
+  }
+  return [...groups.values()];
+}
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.PANDASCORE_TOKEN;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -199,16 +236,22 @@ async function handle(req, res) {
     if (!TOKEN) return send(res, 503, { error: 'Добавьте PANDASCORE_TOKEN в файл .env, чтобы загрузить актуальные матчи.' });
     const game = url.searchParams.get('game') || 'all';
     const status = url.searchParams.get('status') || 'live';
-    if (!['all', ...Object.keys(gamePaths)].includes(game) || !Object.hasOwn(statusPaths, status)) return send(res, 400, { error: 'Неверные параметры запроса.' });
+    if (!['all', ...Object.keys(gamePaths)].includes(game) || ![...Object.keys(statusPaths), 'matches'].includes(status)) return send(res, 400, { error: 'Неверные параметры запроса.' });
     try {
       const games = game === 'all' ? Object.keys(gamePaths) : [game];
+      const matchStatuses = status === 'matches' ? ['past', 'upcoming'] : [status];
       const day = url.searchParams.get('date');
       const dayTimestamp = day ? Date.parse(`${day}T12:00:00Z`) : 0;
       if (day && (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(dayTimestamp) || new Date(dayTimestamp).toISOString().slice(0, 10) !== day)) return send(res, 400, { error: 'Укажите существующую дату в формате ГГГГ-ММ-ДД.' });
-      const lists = await Promise.all(games.map(async (name) => ({ game: name, matches: day && status !== 'live' ? await fetchMatchesForDate(name, status, day) : await fetchMatches(name, status) })));
-      const matches = lists.flatMap(({ game: name, matches: items }) => items
-        .filter(item => status === 'live' ? item.status === 'running' : status === 'past' ? item.status === 'finished' : ['not_started', 'not_scheduled'].includes(item.status))
-        .map(item => ({ ...item, game: name })));
+      const lists = await Promise.all(games.map(async name => {
+        const byStatus = await Promise.all(matchStatuses.map(async matchStatus => ({
+          status: matchStatus,
+          matches: day && matchStatus !== 'live' ? await fetchMatchesForDate(name, matchStatus, day) : await fetchMatches(name, matchStatus)
+        })));
+        return { game: name, matches: byStatus.flatMap(({ status: matchStatus, matches: items }) => items
+          .filter(item => matchStatus === 'live' ? item.status === 'running' : matchStatus === 'past' ? item.status === 'finished' : ['not_started', 'not_scheduled'].includes(item.status))) };
+      }));
+      const matches = lists.flatMap(({ game: name, matches: items }) => items.map(item => ({ ...item, game: name })));
       matches.sort((a, b) => {
         const at = Date.parse(a.begin_at || a.scheduled_at || '') || 0;
         const bt = Date.parse(b.begin_at || b.scheduled_at || '') || 0;
@@ -228,7 +271,8 @@ async function handle(req, res) {
     try {
       const games = game === 'all' ? Object.keys(gamePaths) : [game];
       const lists = await Promise.all(games.map(async name => ({ game: name, tournaments: await pandascore(`/${gamePaths[name]}/tournaments/${status}`, { per_page: '50', sort: status === 'past' ? '-end_at' : 'begin_at' }) })));
-      return send(res, 200, { tournaments: lists.flatMap(({ game: name, tournaments }) => tournaments.map(tournament => ({ ...tournament, game: name }))), updatedAt: new Date().toISOString() });
+      const rows = lists.flatMap(({ game: name, tournaments }) => tournaments.map(tournament => ({ ...tournament, game: name })));
+      return send(res, 200, { tournaments: groupTournaments(rows), updatedAt: new Date().toISOString() });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить турниры.' }); }
   }
   if (url.pathname === '/api/search') {
@@ -285,17 +329,40 @@ async function handle(req, res) {
     const game = url.searchParams.get('game');
     const id = url.searchParams.get('id');
     if (!Object.hasOwn(gamePaths, game) || !id || !/^[A-Za-z0-9_-]+$/.test(id)) return send(res, 400, { error: 'Неверный идентификатор турнира.' });
+    const requestedStages = (url.searchParams.get('stages') || '').split(',').filter(Boolean);
+    if (requestedStages.length > 12 || requestedStages.some(stageId => !/^[A-Za-z0-9_-]+$/.test(stageId))) return send(res, 400, { error: 'Неверный список этапов турнира.' });
     try {
-      // PandaScore exposes tournament details and child resources through global /tournaments routes.
+      // A PandaScore serie groups its child tournaments (stages) under one event.
       const root = `/tournaments/${encodeURIComponent(id)}`;
-      const [tournament, rosters, standings, brackets, matches] = await Promise.all([
-        pandascore(root),
-        pandascore(`${root}/rosters`).catch(() => []),
-        pandascore(`${root}/standings`).catch(() => []),
-        pandascore(`${root}/brackets`).catch(() => []),
-        pandascore(`${root}/matches`, { per_page: '100', sort: 'begin_at' }).catch(() => [])
-      ]);
-      return send(res, 200, { tournament, rosters, standings, brackets, matches, game, liquipediaConfigured: Boolean(LIQUIPEDIA_CONTACT), updatedAt: new Date().toISOString() });
+      const tournament = await pandascore(root);
+      let stages = [];
+      if (tournament.serie?.id != null) stages = await pandascore(`/series/${encodeURIComponent(tournament.serie.id)}/tournaments`, { per_page: '50', sort: 'begin_at' }).catch(() => []);
+      if (!Array.isArray(stages) || !stages.length) stages = [{ ...tournament, id }];
+      const stageMap = new Map(stages.map(stage => [String(stage.id || stage.slug || ''), stage]));
+      stageMap.set(String(tournament.id || id), tournament);
+      const missingStages = requestedStages.filter(stageId => !stageMap.has(stageId));
+      const fetchedStages = await Promise.all(missingStages.map(stageId => pandascore(`/tournaments/${encodeURIComponent(stageId)}`).catch(() => null)));
+      for (const stage of fetchedStages.filter(Boolean)) stageMap.set(String(stage.id || ''), stage);
+      const allStages = [...stageMap.values()].slice(0, 12);
+      const resources = await Promise.all(allStages.map(async stage => {
+        const stageRoot = `/tournaments/${encodeURIComponent(stage.id || id)}`;
+        const [rosters, standings, brackets, matches] = await Promise.all([
+          pandascore(`${stageRoot}/rosters`).catch(() => []),
+          pandascore(`${stageRoot}/standings`).catch(() => []),
+          pandascore(`${stageRoot}/brackets`).catch(() => []),
+          pandascore(`${stageRoot}/matches`, { per_page: '100', sort: 'begin_at' }).catch(() => [])
+        ]);
+        return { rosters, standings, brackets, matches };
+      }));
+      const asList = value => Array.isArray(value) ? value : value && typeof value === 'object' ? Object.values(value) : [];
+      return send(res, 200, {
+        tournament, stages: allStages,
+        rosters: resources.flatMap(item => asList(item.rosters)),
+        standings: resources.flatMap(item => asList(item.standings)),
+        brackets: resources.flatMap(item => asList(item.brackets)),
+        matches: resources.flatMap(item => asList(item.matches)), game,
+        liquipediaConfigured: Boolean(LIQUIPEDIA_CONTACT), updatedAt: new Date().toISOString()
+      });
     } catch (error) { return send(res, 502, { error: error.message || 'Не удалось загрузить сведения о турнире.' }); }
   }
   if (url.pathname === '/api/team') {

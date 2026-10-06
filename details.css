@@ -16,10 +16,8 @@
 @media(max-width:500px){.details-grid{gap:12px 9px}.detail-item strong{font-size:10px}.details-toggle{font-size:9px}}
 .date-filter,.tournament-filter{display:flex;align-items:center;gap:8px;margin:0 0 18px;flex-wrap:wrap}
 #date-filter[hidden],#tournament-filter[hidden],#match-section[hidden],#tournament-section[hidden]{display:none!important}
-.date-shortcut,.tournament-tab{border:1px solid #28333c;border-radius:6px;background:#111820;color:#98a4ad;padding:9px 12px;font:600 10px Manrope,sans-serif;cursor:pointer}
-.date-shortcut.active,.tournament-tab.active{border-color:#566d31;background:#1a2418;color:var(--lime)}
-.date-custom{display:flex;align-items:center;gap:8px;margin-left:auto;color:#87939c;font:10px Manrope,sans-serif}
-.date-custom input{color:#d9e0e4;background:#111820;border:1px solid #28333c;border-radius:6px;padding:8px;font:11px "DM Mono",monospace;color-scheme:dark}
+.tournament-tab{border:1px solid #28333c;border-radius:6px;background:#111820;color:#98a4ad;padding:9px 12px;font:600 10px Manrope,sans-serif;cursor:pointer}
+.tournament-tab.active{border-color:#566d31;background:#1a2418;color:var(--lime)}
 .tournament-card{padding:17px;border:1px solid #29343d;border-radius:9px;background:linear-gradient(140deg,#151e26,#10161c);margin-bottom:12px}
 .tournament-topline{display:flex;justify-content:space-between;color:var(--lime);font:9px "DM Mono",monospace;letter-spacing:.6px}
 .tournament-tier{color:#c7a86a}
@@ -34,6 +32,10 @@
 .tournament-rosters,.standing-list,.bracket-list{display:grid;gap:7px}
 .roster-team,.standing-row,.bracket-match{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;background:#111820;border:1px solid #202b33;border-radius:6px;color:#cad2d7;font-size:10px}
 .roster-team{flex-direction:column;gap:4px}.roster-team span,.standing-row span,.bracket-match small{color:#82909a;line-height:1.5}
+.tournament-participants{display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}
+.tournament-participants li,.tournament-stage{padding:8px 10px;border:1px solid #202b33;border-radius:6px;background:#111820;color:#cad2d7;font-size:10px}
+.tournament-stages{display:flex;flex-wrap:wrap;gap:7px}
+.tournament-stage{display:flex;flex-direction:column;gap:4px}.tournament-stage span{color:#82909a;font-size:9px}
 .standing-row b{color:var(--lime);min-width:18px}.standing-row strong{flex:1}
 .bracket-match{flex-direction:column;gap:4px}.bracket-match>span{color:#82909a;font:9px "DM Mono",monospace;text-transform:uppercase}
 .bracket-match strong{font-size:10px}.data-credit{margin-top:16px;color:#66747e;font:9px "DM Mono",monospace}
@@ -80,7 +82,7 @@
 .account-submit,.account-telegram,.account-logout{min-height:40px;border:1px solid #566d31;border-radius:6px;background:#1a2418;color:var(--lime);font:700 11px Manrope,sans-serif;cursor:pointer}.account-submit:disabled{opacity:.65;cursor:wait}.account-mode{padding:1px;border:0;background:transparent;color:#a2b188;font:10px Manrope,sans-serif;cursor:pointer}.account-divider{display:flex;align-items:center;gap:10px;color:#65727b;font-size:9px}.account-divider:before,.account-divider:after{content:"";height:1px;flex:1;background:#29343c}.account-telegram{border-color:#314454;background:#15212b;color:#b9d6ea}.account-logout{border-color:#46343a;background:#21171b;color:#d9a0a8}.account-message{min-height:16px;margin:0;color:#94a28a;font-size:10px;line-height:1.5;text-align:center}.account-message.error{color:#e28e92}
 @media(max-width:500px){.account-button{gap:5px;font-size:9px}.account-panel{padding:24px 19px}}
 @media(max-width:500px){.discovery-tools{align-items:stretch;flex-direction:column}.global-search{width:100%}.calendar-days{gap:3px}.calendar-day{padding:6px 1px;font-size:7px}.team-history-row{grid-template-columns:minmax(0,1fr) auto}}
-@media(max-width:500px){.date-filter,.tournament-filter{gap:6px}.date-shortcut,.tournament-tab{padding:8px 9px;font-size:9px}.date-custom{width:100%;margin:4px 0 0}.tournament-meta{flex-direction:column;gap:5px}.standing-row{flex-wrap:wrap}.standing-row span{width:100%;padding-left:28px}}
+@media(max-width:500px){.date-filter,.tournament-filter{gap:6px}.tournament-tab{padding:8px 9px;font-size:9px}.tournament-meta{flex-direction:column;gap:5px}.standing-row{flex-wrap:wrap}.standing-row span{width:100%;padding-left:28px}}
 .platform-badge{display:none}
 .bracket-rounds{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,1fr);gap:10px;overflow-x:auto;padding:2px 2px 10px;scroll-snap-type:x proximity}
 .bracket-round{min-width:0;scroll-snap-align:start}

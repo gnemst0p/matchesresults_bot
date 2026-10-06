@@ -28,7 +28,7 @@
 
     <section class="toolbar" aria-label="Фильтры матчей">
       <div class="game-tabs" role="tablist" aria-label="Игра">
-        <button class="game-tab active" data-game="all" role="tab" aria-selected="true">Все игры</button>
+        <button class="game-tab active" data-game="all" role="tab" aria-selected="true">Все</button>
         <button class="game-tab" data-game="dota2" role="tab" aria-selected="false"><span class="game-symbol dota">◈</span>Dota 2</button>
         <button class="game-tab" data-game="cs2" role="tab" aria-selected="false"><span class="game-symbol cs">⌖</span>CS2</button>
       </div>
@@ -42,16 +42,11 @@
 
     <nav class="status-tabs" aria-label="Раздел матчей">
       <button class="status-tab active" data-status="live"><span class="tab-dot"></span>Сейчас <span class="tab-count" id="live-count">0</span></button>
-      <button class="status-tab" data-status="upcoming">Расписание</button>
-      <button class="status-tab" data-status="past">Результаты</button>
+      <button class="status-tab" data-status="matches">Матчи</button>
       <button class="status-tab" data-status="tournaments">Турниры</button>
     </nav>
 
     <div class="date-filter" id="date-filter" hidden aria-label="Выбрать дату матчей">
-      <button class="date-shortcut" data-offset="-1">Вчера</button>
-      <button class="date-shortcut active" data-offset="0">Сегодня</button>
-      <button class="date-shortcut" data-offset="1">Завтра</button>
-      <label class="date-custom"><span>Другая дата</span><input type="date" id="match-date"></label>
       <div class="week-calendar"><div class="week-calendar-heading"><button type="button" id="calendar-prev" aria-label="Предыдущая неделя">‹</button><span id="calendar-title">Эта неделя</span><button type="button" id="calendar-next" aria-label="Следующая неделя">›</button></div><div class="calendar-days" id="calendar-days"></div></div>
     </div>
 
